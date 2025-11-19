@@ -1,7 +1,5 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/services/firebase_providers.dart';
 import '../../../core/storage/local_profile_store.dart';
 import '../../game/data/game_repository.dart';
 
@@ -10,22 +8,22 @@ typedef OnboardingState = AsyncValue<void>;
 class OnboardingController extends StateNotifier<OnboardingState> {
   OnboardingController(
     this._gameRepository,
-    this._auth,
     this._profileStoreFuture,
   ) : super(const AsyncData(null));
 
   final GameRepository _gameRepository;
-  final FirebaseAuth _auth;
   final Future<LocalProfileStore> _profileStoreFuture;
 
-  Future<String> createGame({required String nickname}) async {
+  Future<String> createGame({
+    required String nickname,
+    required String ownerUid,
+  }) async {
     state = const AsyncLoading();
     try {
-      final user = await _currentUser();
-      final gameId = await _gameRepository.createGame(ownerUid: user.uid);
+      final gameId = await _gameRepository.createGame(ownerUid: ownerUid);
       await _gameRepository.addPlayer(
         gameId: gameId,
-        uid: user.uid,
+        uid: ownerUid,
         nickname: nickname,
         role: 'oni',
       );
@@ -41,17 +39,17 @@ class OnboardingController extends StateNotifier<OnboardingState> {
   Future<void> joinGame({
     required String gameId,
     required String nickname,
+    required String uid,
   }) async {
     state = const AsyncLoading();
     try {
-      final user = await _currentUser();
       final exists = await _gameRepository.gameExists(gameId);
       if (!exists) {
         throw StateError('ゲームIDが見つかりません: $gameId');
       }
       await _gameRepository.addPlayer(
         gameId: gameId,
-        uid: user.uid,
+        uid: uid,
         nickname: nickname,
         role: 'runner',
       );
@@ -61,19 +59,6 @@ class OnboardingController extends StateNotifier<OnboardingState> {
       state = AsyncError(error, stackTrace);
       rethrow;
     }
-  }
-
-  Future<User> _currentUser() async {
-    final existing = _auth.currentUser;
-    if (existing != null) {
-      return existing;
-    }
-    final credential = await _auth.signInAnonymously();
-    final user = credential.user;
-    if (user == null) {
-      throw StateError('Anonymous sign-in failed');
-    }
-    return user;
   }
 
   Future<void> _persistProfile({
@@ -89,7 +74,6 @@ class OnboardingController extends StateNotifier<OnboardingState> {
 final onboardingControllerProvider =
     StateNotifierProvider<OnboardingController, OnboardingState>((ref) {
   final repo = ref.watch(gameRepositoryProvider);
-  final auth = ref.watch(firebaseAuthProvider);
   final profileStoreFuture = ref.watch(localProfileStoreProvider.future);
-  return OnboardingController(repo, auth, profileStoreFuture);
+  return OnboardingController(repo, profileStoreFuture);
 });

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "598692971255",
+    "project_id": "yamago-2ae8d",
+    "storage_bucket": "yamago-2ae8d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:598692971255:android:bd9f925a7c7707b0e609f2",
+        "android_client_info": {
+          "package_name": "com.hiroki.yamago"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCnw9MQkotXZGEQb6x6SUVslysnnL1VKPc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

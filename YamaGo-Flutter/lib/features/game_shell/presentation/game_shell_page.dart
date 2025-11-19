@@ -25,29 +25,50 @@ import 'package:yamago_flutter/features/game/presentation/widgets/player_profile
 import 'package:yamago_flutter/features/onboarding/presentation/onboarding_pages.dart';
 import 'package:yamago_flutter/features/pins/presentation/pin_editor_page.dart';
 
-class GameShellPage extends StatelessWidget {
+class GameShellPage extends StatefulWidget {
   const GameShellPage({
     super.key,
     required this.gameId,
-    required this.navigationShell,
   });
 
+  static const routeName = 'game-shell';
+  static const routePath = '/game/:gameId';
+  static String location(String gameId) => '/game/$gameId';
+
   final String gameId;
-  final StatefulNavigationShell navigationShell;
+
+  @override
+  State<GameShellPage> createState() => _GameShellPageState();
+}
+
+class _GameShellPageState extends State<GameShellPage> {
+  int _currentIndex = 0;
+
+  void _handleTabSelected(int index) {
+    setState(() {
+      _currentIndex = index;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
+    final sections = [
+      GameMapSection(gameId: widget.gameId),
+      GameChatSection(gameId: widget.gameId),
+      GameSettingsSection(gameId: widget.gameId),
+    ];
+
     return Scaffold(
       appBar: AppBar(
-        title: Text('ゲームID: $gameId'),
+        title: Text('ゲームID: ${widget.gameId}'),
       ),
-      body: navigationShell,
+      body: IndexedStack(
+        index: _currentIndex,
+        children: sections,
+      ),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: navigationShell.currentIndex,
-        onDestinationSelected: (index) => navigationShell.goBranch(
-          index,
-          initialLocation: index == navigationShell.currentIndex,
-        ),
+        selectedIndex: _currentIndex,
+        onDestinationSelected: _handleTabSelected,
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.map_outlined),
@@ -72,9 +93,6 @@ class GameShellPage extends StatelessWidget {
 
 class GameMapSection extends ConsumerStatefulWidget {
   const GameMapSection({super.key, required this.gameId});
-
-  static const routeName = 'game-map';
-  static const routePath = '/game/:gameId/map';
 
   final String gameId;
 
@@ -333,9 +351,6 @@ class _InfoBanner extends StatelessWidget {
 class GameChatSection extends ConsumerStatefulWidget {
   const GameChatSection({super.key, required this.gameId});
 
-  static const routeName = 'game-chat';
-  static const routePath = '/game/:gameId/chat';
-
   final String gameId;
 
   @override
@@ -481,9 +496,6 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
 
 class GameSettingsSection extends ConsumerWidget {
   const GameSettingsSection({super.key, required this.gameId});
-
-  static const routeName = 'game-settings';
-  static const routePath = '/game/:gameId/settings';
 
   final String gameId;
 

@@ -26,6 +26,12 @@
 	<true/>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
+	<key>GMSServicesApiKey</key>
+	<string>AIzaSyCO0i-DxjmLQz82xiubMkpfotc-k6MBuEI</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>山手線リアル鬼ごっこをプレイするために現在地を使用し、他のプレイヤーと共有します。</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>ゲーム中はバックグラウンドでも位置情報を送信し、リアルタイムで追跡できるようにします。</string>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
 	<key>UISupportedInterfaceOrientations</key>

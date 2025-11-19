@@ -47,10 +47,14 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
     final pinsState = ref.watch(pinsStreamProvider(widget.gameId));
     final gameState = ref.watch(gameStreamProvider(widget.gameId));
 
-    final pinCountLimit = gameState.maybeWhen(
+    final rawPinCountLimit = gameState.maybeWhen(
       data: (game) => game?.pinCount,
       orElse: () => null,
     );
+
+    final pinCountLimit = rawPinCountLimit == null
+        ? null
+        : rawPinCountLimit.clamp(0, 9999).toInt();
 
     final pins = pinsState.value ?? const <PinPoint>[];
     pinsState.whenData(_maybeCenterOnPins);
@@ -58,13 +62,12 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
 
     final hiddenPinCount = pinCountLimit == null
         ? 0
-        : math.max(0, pins.length - math.max(pinCountLimit, 0));
+        : (pins.length > pinCountLimit ? pins.length - pinCountLimit : 0);
     final missingPinCount = pinCountLimit == null
         ? 0
-        : math.max(0, math.max(pinCountLimit, 0) - pins.length);
+        : (pinCountLimit > pins.length ? pinCountLimit - pins.length : 0);
     final pinLimitResolved = pinCountLimit != null;
-    final configuredPinCount =
-        (pinCountLimit ?? pins.length).clamp(0, 9999); // sanity bound
+    final configuredPinCount = pinCountLimit ?? pins.length;
 
     return Scaffold(
       appBar: AppBar(

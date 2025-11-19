@@ -3,6 +3,9 @@
         android:label="yamago_flutter"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="AIzaSyCO0i-DxjmLQz82xiubMkpfotc-k6MBuEI" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

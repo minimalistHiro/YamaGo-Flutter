@@ -33,40 +33,41 @@ class DefaultFirebaseOptions {
         apiKey: _resolveValue(
           debugName: 'FIREBASE_WEB_API_KEY',
           platformOverride: _webApiKey,
-          fallback: 'YOUR_WEB_API_KEY',
+          fallback: _defaultApiKey,
         ),
         appId: _resolveValue(
           debugName: 'FIREBASE_WEB_APP_ID',
           platformOverride: _webAppId,
-          fallback: 'YOUR_WEB_APP_ID',
+          fallback: _defaultWebAppId,
         ),
         messagingSenderId: _resolveValue(
           debugName: 'FIREBASE_WEB_MESSAGING_SENDER_ID',
           platformOverride: _webMessagingSenderId,
           sharedValue: _messagingSenderId,
-          fallback: 'YOUR_WEB_SENDER_ID',
+          fallback: _defaultMessagingSenderId,
         ),
         projectId: _resolveValue(
           debugName: 'FIREBASE_WEB_PROJECT_ID',
           platformOverride: _webProjectId,
           sharedValue: _projectId,
-          fallback: 'YOUR_PROJECT_ID',
+          fallback: _defaultProjectId,
         ),
         storageBucket: _resolveValue(
           debugName: 'FIREBASE_WEB_STORAGE_BUCKET',
           platformOverride: _webStorageBucket,
           sharedValue: _storageBucket,
-          fallback: 'YOUR_STORAGE_BUCKET',
+          fallback: _defaultStorageBucket,
         ),
         authDomain: _resolveValue(
           debugName: 'FIREBASE_WEB_AUTH_DOMAIN',
           platformOverride: _webAuthDomain,
-          fallback: 'YOUR_WEB_AUTH_DOMAIN',
+          fallback: _defaultAuthDomain,
         ),
         measurementId: () {
           final value = _resolveValue(
             debugName: 'FIREBASE_WEB_MEASUREMENT_ID',
             platformOverride: _webMeasurementId,
+            fallback: _defaultMeasurementId,
             allowEmpty: true,
           );
           return value.isEmpty ? null : value;
@@ -77,28 +78,28 @@ class DefaultFirebaseOptions {
         apiKey: _resolveValue(
           debugName: 'FIREBASE_ANDROID_API_KEY',
           platformOverride: _androidApiKey,
-          fallback: 'YOUR_ANDROID_API_KEY',
+          fallback: _defaultAndroidApiKey,
         ),
         appId: _resolveValue(
           debugName: 'FIREBASE_ANDROID_APP_ID',
           platformOverride: _androidAppId,
-          fallback: 'YOUR_ANDROID_APP_ID',
+          fallback: _defaultAndroidAppId,
         ),
         messagingSenderId: _resolveValue(
           debugName: 'FIREBASE_ANDROID_MESSAGING_SENDER_ID',
           platformOverride: _androidMessagingSenderId,
           sharedValue: _messagingSenderId,
-          fallback: 'YOUR_ANDROID_SENDER_ID',
+          fallback: _defaultMessagingSenderId,
         ),
         projectId: _resolveValue(
           debugName: 'FIREBASE_PROJECT_ID',
           sharedValue: _projectId,
-          fallback: 'YOUR_PROJECT_ID',
+          fallback: _defaultProjectId,
         ),
         storageBucket: _resolveValue(
           debugName: 'FIREBASE_STORAGE_BUCKET',
           sharedValue: _storageBucket,
-          fallback: 'YOUR_STORAGE_BUCKET',
+          fallback: _defaultStorageBucket,
         ),
       );
 
@@ -106,28 +107,28 @@ class DefaultFirebaseOptions {
         apiKey: _resolveValue(
           debugName: 'FIREBASE_IOS_API_KEY',
           platformOverride: _iosApiKey,
-          fallback: 'YOUR_IOS_API_KEY',
+          fallback: _defaultIosApiKey,
         ),
         appId: _resolveValue(
           debugName: 'FIREBASE_IOS_APP_ID',
           platformOverride: _iosAppId,
-          fallback: 'YOUR_IOS_APP_ID',
+          fallback: _defaultIosAppId,
         ),
         messagingSenderId: _resolveValue(
           debugName: 'FIREBASE_IOS_MESSAGING_SENDER_ID',
           platformOverride: _iosMessagingSenderId,
           sharedValue: _messagingSenderId,
-          fallback: 'YOUR_IOS_SENDER_ID',
+          fallback: _defaultMessagingSenderId,
         ),
         projectId: _resolveValue(
           debugName: 'FIREBASE_PROJECT_ID',
           sharedValue: _projectId,
-          fallback: 'YOUR_PROJECT_ID',
+          fallback: _defaultProjectId,
         ),
         storageBucket: _resolveValue(
           debugName: 'FIREBASE_STORAGE_BUCKET',
           sharedValue: _storageBucket,
-          fallback: 'YOUR_STORAGE_BUCKET',
+          fallback: _defaultStorageBucket,
         ),
         iosClientId: () {
           final value = _resolveValue(
@@ -140,7 +141,7 @@ class DefaultFirebaseOptions {
         iosBundleId: _resolveValue(
           debugName: 'FIREBASE_IOS_BUNDLE_ID',
           platformOverride: _iosBundleId,
-          fallback: 'com.example.yamago',
+          fallback: _defaultIosBundleId,
         ),
       );
 
@@ -175,10 +176,23 @@ class DefaultFirebaseOptions {
           debugName: 'FIREBASE_MACOS_BUNDLE_ID',
           platformOverride: _macosBundleId,
           sharedValue: _iosBundleId,
-          fallback: 'com.example.yamago',
+          fallback: _defaultIosBundleId,
         ),
       );
 }
+
+const _defaultApiKey = 'AIzaSyCO0i-DxjmLQz82xiubMkpfotc-k6MBuEI';
+const _defaultAndroidApiKey = 'AIzaSyCnw9MQkotXZGEQb6x6SUVslysnnL1VKPc';
+const _defaultIosApiKey = 'AIzaSyBKqCw_MutiFesHreiTbAkzslft_rOfKpw';
+const _defaultWebAppId = '1:598692971255:web:9f5977110f979b13e609f2';
+const _defaultAndroidAppId = '1:598692971255:android:bd9f925a7c7707b0e609f2';
+const _defaultIosAppId = '1:598692971255:ios:0af7be44589fc219e609f2';
+const _defaultProjectId = 'yamago-2ae8d';
+const _defaultStorageBucket = 'yamago-2ae8d.firebasestorage.app';
+const _defaultMessagingSenderId = '598692971255';
+const _defaultMeasurementId = 'G-NL6CP18NNK';
+const _defaultAuthDomain = 'yamago-2ae8d.firebaseapp.com';
+const _defaultIosBundleId = 'com.hiroki.yamago';
 
 String _resolveValue({
   required String debugName,
