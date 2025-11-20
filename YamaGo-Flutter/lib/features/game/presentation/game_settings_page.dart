@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:yamago_flutter/core/services/firebase_providers.dart';
 import 'package:yamago_flutter/features/game/application/player_providers.dart';
 import 'package:yamago_flutter/features/game/data/game_repository.dart';
 import 'package:yamago_flutter/features/game/domain/game.dart';
+import 'package:yamago_flutter/features/game/domain/player.dart';
 import 'package:yamago_flutter/features/pins/presentation/pin_editor_page.dart';
 
 class GameSettingsPage extends ConsumerStatefulWidget {
@@ -52,9 +54,24 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
   @override
   Widget build(BuildContext context) {
     final gameAsync = ref.watch(gameStreamProvider(widget.gameId));
+    final auth = ref.watch(firebaseAuthProvider);
+    final currentUid = auth.currentUser?.uid;
+    final playerAsync = currentUid == null
+        ? null
+        : ref.watch(
+            playerStreamProvider(
+              (gameId: widget.gameId, uid: currentUid),
+            ),
+          );
     return Scaffold(
       appBar: AppBar(
         title: const Text('ゲーム設定'),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: _buildAppBarAvatar(context, playerAsync),
+          ),
+        ],
       ),
       body: SafeArea(
         child: gameAsync.when(
@@ -70,6 +87,8 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
                 ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
+                    _buildProfileHeader(context, playerAsync),
+                    const SizedBox(height: 16),
                     if (_errorMessage != null) ...[
                       Card(
                         color: Theme.of(context).colorScheme.errorContainer,
@@ -571,4 +590,152 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
     }
     return '${meters}m';
   }
+
+  Widget _buildAppBarAvatar(
+    BuildContext context,
+    AsyncValue<Player?>? playerAsync,
+  ) {
+    Widget buildAvatar(String? avatarUrl) => Center(
+          child: _buildAvatarView(
+            context,
+            avatarUrl,
+            size: 36,
+            borderWidth: 2,
+          ),
+        );
+    final placeholder = buildAvatar(null);
+    if (playerAsync == null) {
+      return placeholder;
+    }
+    return playerAsync.when(
+      data: (player) => buildAvatar(player?.avatarUrl),
+      loading: () => const Center(
+        child: SizedBox(
+          width: 36,
+          height: 36,
+          child: Padding(
+            padding: EdgeInsets.all(8),
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      ),
+      error: (_, __) => placeholder,
+    );
+  }
+
+  Widget _buildProfileHeader(
+    BuildContext context,
+    AsyncValue<Player?>? playerAsync,
+  ) {
+    final theme = Theme.of(context);
+    Widget content;
+    if (playerAsync == null) {
+      content = _buildProfileContent(
+        context,
+        player: null,
+        theme: theme,
+      );
+    } else {
+      content = playerAsync.when(
+        data: (player) => _buildProfileContent(
+          context,
+          player: player,
+          theme: theme,
+        ),
+        loading: () => const SizedBox(
+          height: 96,
+          child: Center(child: CircularProgressIndicator()),
+        ),
+        error: (error, _) => Text(
+          'プロフィールを読み込めませんでした: $error',
+          style: theme.textTheme.bodySmall,
+        ),
+      );
+    }
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'あなたのプロフィール',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            content,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProfileContent(
+    BuildContext context, {
+    required Player? player,
+    required ThemeData theme,
+  }) {
+    final nickname = player?.nickname ?? 'プレイヤー';
+    final role = switch (player?.role) {
+      PlayerRole.oni => '鬼',
+      PlayerRole.runner => '逃走者',
+      null => '未設定',
+    };
+    return Column(
+      children: [
+        _buildAvatarView(context, player?.avatarUrl),
+        const SizedBox(height: 12),
+        Text(
+          nickname,
+          style: theme.textTheme.titleMedium,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          role,
+          style: theme.textTheme.bodySmall
+              ?.copyWith(color: theme.colorScheme.primary),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAvatarView(
+    BuildContext context,
+    String? avatarUrl, {
+    double size = 96,
+    double borderWidth = 3,
+  }) {
+    final borderColor = Theme.of(context).colorScheme.primary.withOpacity(0.3);
+    final fallbackIconSize = size * 0.5;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: borderColor, width: borderWidth),
+      ),
+      child: ClipOval(
+        child: avatarUrl != null && avatarUrl.isNotEmpty
+            ? Image.network(
+                avatarUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Icon(
+                  Icons.person_rounded,
+                  size: fallbackIconSize,
+                ),
+                loadingBuilder: (context, child, progress) {
+                  if (progress == null) return child;
+                  return const Center(child: CircularProgressIndicator());
+                },
+              )
+            : Icon(
+                Icons.person_rounded,
+                size: fallbackIconSize,
+              ),
+      ),
+    );
+  }
+
 }
