@@ -192,7 +192,7 @@ const _defaultStorageBucket = 'yamago-2ae8d.firebasestorage.app';
 const _defaultMessagingSenderId = '598692971255';
 const _defaultMeasurementId = 'G-NL6CP18NNK';
 const _defaultAuthDomain = 'yamago-2ae8d.firebaseapp.com';
-const _defaultIosBundleId = 'com.hiroki.yamago';
+const _defaultIosBundleId = 'io.groumap.yamago';
 
 String _resolveValue({
   required String debugName,

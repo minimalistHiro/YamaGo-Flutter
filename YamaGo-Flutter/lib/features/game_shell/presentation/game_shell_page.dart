@@ -20,6 +20,7 @@ import 'package:yamago_flutter/features/game/application/player_providers.dart';
 import 'package:yamago_flutter/features/game/data/game_repository.dart';
 import 'package:yamago_flutter/features/game/domain/player.dart';
 import 'package:yamago_flutter/features/game/presentation/game_settings_page.dart';
+import 'package:yamago_flutter/features/game/presentation/role_assignment_page.dart';
 import 'package:yamago_flutter/features/game/presentation/widgets/game_status_banner.dart';
 import 'package:yamago_flutter/features/game/presentation/widgets/player_hud.dart';
 import 'package:yamago_flutter/features/game/presentation/widgets/player_list_card.dart';
@@ -547,7 +548,25 @@ class GameSettingsSection extends ConsumerWidget {
                       subtitle: const Text('発電所数や視認距離、カウントダウンなどを調整'),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () {
-                        context.push(GameSettingsPage.path(gameId));
+                        context.pushNamed(
+                          GameSettingsPage.routeName,
+                          pathParameters: {'gameId': gameId},
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.swap_horiz),
+                      title: const Text('役職振り分け'),
+                      subtitle: const Text('鬼/逃走者の人数と役割を整理・ランダム振り分け'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        context.pushNamed(
+                          RoleAssignmentPage.routeName,
+                          pathParameters: {'gameId': gameId},
+                        );
                       },
                     ),
                   ),
@@ -605,6 +624,7 @@ class _ActionButtons extends ConsumerStatefulWidget {
 class _ActionButtonsState extends ConsumerState<_ActionButtons> {
   bool _isLeaving = false;
   bool _isClaimingOwner = false;
+  bool _isDeletingGame = false;
 
   bool get _isOwner => widget.ownerUid == widget.currentUid;
 
@@ -760,6 +780,75 @@ class _ActionButtonsState extends ConsumerState<_ActionButtons> {
               : const Icon(Icons.logout),
           label: const Text('ログアウト'),
         ),
+        if (_isOwner) ...[
+          const SizedBox(height: 8),
+          ElevatedButton.icon(
+            onPressed: _isDeletingGame
+                ? null
+                : () async {
+                    final confirmed = await showDialog<bool>(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: const Text('ゲームを削除'),
+                        content: const Text(
+                          'このゲームに関するプレイヤーやチャット履歴などのデータがすべて削除されます。'
+                          'この操作は取り消せません。実行してもよろしいですか？',
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.of(context).pop(false),
+                            child: const Text('キャンセル'),
+                          ),
+                          ElevatedButton(
+                            onPressed: () => Navigator.of(context).pop(true),
+                            child: const Text('削除する'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirmed != true) return;
+                    setState(() {
+                      _isDeletingGame = true;
+                    });
+                    final router = GoRouter.of(context);
+                    try {
+                      final repo = ref.read(gameRepositoryProvider);
+                      await repo.deleteGame(gameId: widget.gameId);
+                      final exitController =
+                          ref.read(gameExitControllerProvider);
+                      await exitController.leaveGame(gameId: widget.gameId);
+                      if (!mounted) return;
+                      router.goNamed(WelcomePage.routeName);
+                    } catch (error) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('ゲームの削除に失敗しました: $error')),
+                        );
+                      }
+                    } finally {
+                      if (mounted) {
+                        setState(() {
+                          _isDeletingGame = false;
+                        });
+                      }
+                    }
+                  },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.black87,
+            ),
+            icon: _isDeletingGame
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : const Icon(Icons.delete_forever),
+            label: const Text('ゲームを削除'),
+          ),
+        ],
       ],
     );
   }

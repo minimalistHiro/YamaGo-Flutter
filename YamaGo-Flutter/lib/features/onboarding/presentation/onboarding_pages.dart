@@ -24,9 +24,8 @@ class WelcomePage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final firebaseState = ref.watch(firebaseAppProvider);
     final authState = ref.watch(ensureAnonymousSignInProvider);
-    final initError = firebaseState.hasError
-        ? firebaseState.error
-        : authState.error;
+    final initError =
+        firebaseState.hasError ? firebaseState.error : authState.error;
     final isLoading = firebaseState.isLoading || authState.isLoading;
     final isReady =
         firebaseState.hasValue && authState.hasValue && initError == null;
@@ -497,138 +496,145 @@ class _CreateGamePageState extends ConsumerState<CreateGamePage> {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 560),
             child: _NeonCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  _BackHeader(
-                    onBack: () => context.pop(),
-                    label: 'SESSION DEPLOYED',
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    width: 96,
-                    height: 96,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: _OnboardingColors.neonGreen.withOpacity(0.4),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    _BackHeader(
+                      onBack: () => context.pop(),
+                      label: 'SESSION DEPLOYED',
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      width: 96,
+                      height: 96,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: _OnboardingColors.neonGreen.withOpacity(0.4),
+                        ),
+                        color: _OnboardingColors.surfaceAccent,
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x3322B59B),
+                            blurRadius: 24,
+                          ),
+                        ],
                       ),
-                      color: _OnboardingColors.surfaceAccent,
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x3322B59B),
-                          blurRadius: 24,
+                      child: const Icon(
+                        Icons.check_rounded,
+                        color: _OnboardingColors.neonGreen,
+                        size: 48,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    const Text(
+                      'ゲームを作成しました',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: _OnboardingColors.titleText,
+                        fontSize: 26,
+                        letterSpacing: 6,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Share The Access Code',
+                      style: TextStyle(
+                        color: _OnboardingColors.mutedText,
+                        letterSpacing: 4,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const _InputLabel('ゲームID'),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 20,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _OnboardingColors.surfaceAccent,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color:
+                                  _OnboardingColors.neonGreen.withOpacity(0.4),
+                            ),
+                          ),
+                          child: SelectableText(
+                            _createdGameId!,
+                            style: const TextStyle(
+                              color: _OnboardingColors.neonGlow,
+                              fontFamily: 'monospace',
+                              letterSpacing: 3,
+                              fontSize: 18,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        FilledButton(
+                          style: FilledButton.styleFrom(
+                            backgroundColor:
+                                _OnboardingColors.neonGlow.withOpacity(0.9),
+                            foregroundColor: Colors.black,
+                            minimumSize: const Size.fromHeight(50),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(18),
+                            ),
+                            textStyle: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 3,
+                            ),
+                          ),
+                          onPressed: _handleCopyGameId,
+                          child: Text(_copied ? 'コピー済み' : 'コピー'),
                         ),
                       ],
                     ),
-                    child: const Icon(
-                      Icons.check_rounded,
-                      color: _OnboardingColors.neonGreen,
-                      size: 48,
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  const Text(
-                    'ゲームを作成しました',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: _OnboardingColors.titleText,
-                      fontSize: 26,
-                      letterSpacing: 6,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Share The Access Code',
-                    style: TextStyle(
-                      color: _OnboardingColors.mutedText,
-                      letterSpacing: 4,
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const _InputLabel('ゲームID'),
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 20,
+                    const SizedBox(height: 24),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: _OnboardingColors.surfaceAccent,
+                        border: Border.all(
+                          color: _OnboardingColors.neonGreen.withOpacity(0.35),
                         ),
-                        decoration: BoxDecoration(
-                          color: _OnboardingColors.surfaceAccent,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: _OnboardingColors.neonGreen.withOpacity(0.4),
-                          ),
-                        ),
-                        child: SelectableText(
-                          _createdGameId!,
-                          style: const TextStyle(
-                            color: _OnboardingColors.neonGlow,
-                            fontFamily: 'monospace',
-                            letterSpacing: 3,
-                            fontSize: 18,
-                          ),
-                        ),
+                        borderRadius: BorderRadius.circular(20),
                       ),
-                      const SizedBox(height: 16),
-                      FilledButton(
-                        style: FilledButton.styleFrom(
-                          backgroundColor:
-                              _OnboardingColors.neonGlow.withOpacity(0.9),
-                          foregroundColor: Colors.black,
-                          minimumSize: const Size.fromHeight(50),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(18),
-                          ),
-                          textStyle: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 3,
-                          ),
-                        ),
-                        onPressed: _handleCopyGameId,
-                        child: Text(_copied ? 'コピー済み' : 'コピー'),
+                      child: const _FooterNotices(
+                        alignCenter: false,
+                        lines: [
+                          'ゲームが正常に保存されました',
+                          'あなたは鬼として参加しています',
+                          '他のプレイヤーにゲームIDを共有してください',
+                          'ゲーム開始するには「ゲーム開始」を押してください',
+                        ],
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: _OnboardingColors.surfaceAccent,
-                      border: Border.all(
-                        color: _OnboardingColors.neonGreen.withOpacity(0.35),
-                      ),
-                      borderRadius: BorderRadius.circular(20),
                     ),
-                    child: const _FooterNotices(
-                      alignCenter: false,
+                    const SizedBox(height: 24),
+                    FilledButton(
+                      style: _accentButtonStyle(),
+                      onPressed: () {
+                        final gameId = _createdGameId;
+                        if (gameId == null) return;
+                        unawaited(_navigateToGame(gameId));
+                      },
+                      child: const Text('ゲームを開始'),
+                    ),
+                    const SizedBox(height: 24),
+                    const _FooterNotices(
                       lines: [
-                        'ゲームが正常に保存されました',
-                        'あなたは鬼として参加しています',
-                        '他のプレイヤーにゲームIDを共有してください',
-                        'ゲーム開始するには「ゲーム開始」を押してください',
+                        '位置情報の使用に同意してください',
+                        '山手線内でのみプレイ可能です',
                       ],
                     ),
-                  ),
-                  const SizedBox(height: 24),
-                  FilledButton(
-                    style: _accentButtonStyle(),
-                    onPressed: () => _navigateToGame(_createdGameId!),
-                    child: const Text('ゲームを開始'),
-                  ),
-                  const SizedBox(height: 24),
-                  const _FooterNotices(
-                    lines: [
-                      '位置情報の使用に同意してください',
-                      '山手線内でのみプレイ可能です',
-                    ],
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -657,78 +663,80 @@ class _CreateGamePageState extends ConsumerState<CreateGamePage> {
           child: _NeonCard(
             child: Stack(
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _BackHeader(
-                      onBack: () => context.pop(),
-                      label: 'CREATE SESSION',
-                    ),
-                    const SizedBox(height: 16),
-                    Center(
-                      child: Column(
-                        children: const [
-                          Text(
-                            'ゲームを作成',
-                            style: TextStyle(
-                              color: _OnboardingColors.titleText,
-                              fontSize: 26,
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: 6,
-                            ),
-                          ),
-                          SizedBox(height: 8),
-                          Text(
-                            'Launch The Yamago Arena',
-                            style: TextStyle(
-                              color: _OnboardingColors.mutedText,
-                              letterSpacing: 4,
-                            ),
-                          ),
-                        ],
+                SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _BackHeader(
+                        onBack: () => context.pop(),
+                        label: 'CREATE SESSION',
                       ),
-                    ),
-                    const SizedBox(height: 32),
-                    Form(
-                      key: _formKey,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const _InputLabel('ニックネーム'),
-                          TextFormField(
-                            controller: _nicknameController,
-                            decoration: _inputDecoration('あなたのニックネーム'),
-                            validator: (value) =>
-                                (value == null || value.trim().isEmpty)
-                                    ? 'ニックネームを入力してください'
-                                    : null,
-                          ),
-                          if (_errorMessage != null) ...[
-                            const SizedBox(height: 20),
-                            _ErrorBanner(message: _errorMessage!),
+                      const SizedBox(height: 16),
+                      Center(
+                        child: Column(
+                          children: const [
+                            Text(
+                              'ゲームを作成',
+                              style: TextStyle(
+                                color: _OnboardingColors.titleText,
+                                fontSize: 26,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 6,
+                              ),
+                            ),
+                            SizedBox(height: 8),
+                            Text(
+                              'Launch The Yamago Arena',
+                              style: TextStyle(
+                                color: _OnboardingColors.mutedText,
+                                letterSpacing: 4,
+                              ),
+                            ),
                           ],
-                          const SizedBox(height: 24),
-                          FilledButton(
-                            style: _primaryButtonStyle(
-                                _OnboardingColors.neonGreen),
-                            onPressed: _isCreating ? null : _handleCreate,
-                            child: Text(
-                              _isCreating ? '作成中...' : 'ゲームを作成',
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+                      Form(
+                        key: _formKey,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const _InputLabel('ニックネーム'),
+                            TextFormField(
+                              controller: _nicknameController,
+                              decoration: _inputDecoration('あなたのニックネーム'),
+                              validator: (value) =>
+                                  (value == null || value.trim().isEmpty)
+                                      ? 'ニックネームを入力してください'
+                                      : null,
                             ),
-                          ),
+                            if (_errorMessage != null) ...[
+                              const SizedBox(height: 20),
+                              _ErrorBanner(message: _errorMessage!),
+                            ],
+                            const SizedBox(height: 24),
+                            FilledButton(
+                              style: _primaryButtonStyle(
+                                  _OnboardingColors.neonGreen),
+                              onPressed: _isCreating ? null : _handleCreate,
+                              child: Text(
+                                _isCreating ? '作成中...' : 'ゲームを作成',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+                      const _FooterNotices(
+                        lines: [
+                          'ゲーム作成者は鬼になります',
+                          '位置情報の使用に同意してください',
+                          '山手線内でのみプレイ可能です',
+                          'ゲーム開始30分後に鬼が有効化されます',
                         ],
                       ),
-                    ),
-                    const SizedBox(height: 32),
-                    const _FooterNotices(
-                      lines: [
-                        'ゲーム作成者は鬼になります',
-                        '位置情報の使用に同意してください',
-                        '山手線内でのみプレイ可能です',
-                        'ゲーム開始30分後に鬼が有効化されます',
-                      ],
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
                 if (_isCreating)
                   const Positioned.fill(
@@ -764,7 +772,7 @@ class _CreateGamePageState extends ConsumerState<CreateGamePage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('ゲームを作成しました: $gameId')),
       );
-      _navigateToGame(gameId);
+      await _navigateToGame(gameId);
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -803,7 +811,8 @@ class _CreateGamePageState extends ConsumerState<CreateGamePage> {
     );
   }
 
-  void _navigateToGame(String gameId) {
+  Future<void> _navigateToGame(String gameId) async {
+    await ref.read(ensureAnonymousSignInProvider.future);
     if (!mounted) return;
     context.goNamed(
       GameShellPage.routeName,

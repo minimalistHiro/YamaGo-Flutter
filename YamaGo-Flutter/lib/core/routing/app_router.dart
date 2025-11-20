@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:yamago_flutter/features/game/presentation/game_settings_page.dart';
+import 'package:yamago_flutter/features/game/presentation/role_assignment_page.dart';
 import 'package:yamago_flutter/features/game_shell/presentation/game_shell_page.dart';
 import 'package:yamago_flutter/features/onboarding/presentation/onboarding_pages.dart';
 import 'package:yamago_flutter/features/pins/presentation/pin_editor_page.dart';
@@ -48,6 +49,17 @@ final appRouterProvider = Provider<GoRouter>(
               return const WelcomePage();
             }
             return GameSettingsPage(gameId: gameId);
+          },
+        ),
+        GoRoute(
+          path: RoleAssignmentPage.routePath,
+          name: RoleAssignmentPage.routeName,
+          builder: (context, state) {
+            final gameId = state.pathParameters['gameId'];
+            if (gameId == null || gameId.isEmpty) {
+              return const WelcomePage();
+            }
+            return RoleAssignmentPage(gameId: gameId);
           },
         ),
         GoRoute(

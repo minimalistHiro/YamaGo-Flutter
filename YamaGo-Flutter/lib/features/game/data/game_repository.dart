@@ -109,6 +109,54 @@ class GameRepository {
   }) {
     return _gameCollection.doc(gameId).update(settings.toMap());
   }
+
+  Future<void> deleteGame({required String gameId}) async {
+    final docRef = _gameCollection.doc(gameId);
+    final subcollections = [
+      'players',
+      'pins',
+      'captures',
+      'alerts',
+      'events',
+      'messages_oni',
+      'messages_runner',
+      'locations',
+    ];
+    for (final collection in subcollections) {
+      try {
+        await _deleteSubcollection(docRef, collection);
+      } catch (error) {
+        // Ignore permission errors for subcollections so that at least the parent
+        // document can be removed and the caller can continue with cleanup.
+        assert(() {
+          // Helps during development while keeping release builds quiet.
+          // ignore: avoid_print
+          print('Failed to delete $collection for game $gameId: $error');
+          return true;
+        }());
+      }
+    }
+    await docRef.delete();
+  }
+
+  Future<void> _deleteSubcollection(
+    DocumentReference<Map<String, dynamic>> docRef,
+    String collection,
+  ) async {
+    const batchLimit = 300;
+    final colRef = docRef.collection(collection);
+    while (true) {
+      final snapshot = await colRef.limit(batchLimit).get();
+      if (snapshot.docs.isEmpty) {
+        break;
+      }
+      final batch = _firestore.batch();
+      for (final doc in snapshot.docs) {
+        batch.delete(doc.reference);
+      }
+      await batch.commit();
+    }
+  }
 }
 
 final gameRepositoryProvider = Provider<GameRepository>((ref) {
