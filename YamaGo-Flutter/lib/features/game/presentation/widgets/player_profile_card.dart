@@ -33,19 +33,6 @@ class PlayerProfileCard extends StatelessWidget {
             _buildRow(theme, '役割', _roleLabel(player.role)),
             _buildRow(theme, '状態', _statusLabel(player.status)),
             _buildRow(theme, 'ステータス', player.isActive ? '参加中' : '離脱'),
-            if (player.position != null)
-              _buildRow(
-                theme,
-                '位置',
-                '${player.position!.latitude.toStringAsFixed(5)}, '
-                    '${player.position!.longitude.toStringAsFixed(5)}',
-              ),
-            if (player.updatedAt != null)
-              _buildRow(
-                theme,
-                '最終更新',
-                player.updatedAt.toString(),
-              ),
           ],
         ),
       ),

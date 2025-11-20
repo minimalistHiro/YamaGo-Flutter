@@ -11,6 +11,13 @@ class Game {
     this.countdownStartAt,
     this.countdownDurationSec,
     this.pinCount,
+    this.captureRadiusM,
+    this.runnerSeeKillerRadiusM,
+    this.runnerSeeRunnerRadiusM,
+    this.runnerSeeGeneratorRadiusM,
+    this.killerDetectRunnerRadiusM,
+    this.killerSeeGeneratorRadiusM,
+    this.gameDurationSec,
   });
 
   final String id;
@@ -20,6 +27,13 @@ class Game {
   final DateTime? countdownStartAt;
   final int? countdownDurationSec;
   final int? pinCount;
+  final int? captureRadiusM;
+  final int? runnerSeeKillerRadiusM;
+  final int? runnerSeeRunnerRadiusM;
+  final int? runnerSeeGeneratorRadiusM;
+  final int? killerDetectRunnerRadiusM;
+  final int? killerSeeGeneratorRadiusM;
+  final int? gameDurationSec;
 
   int? get countdownRemainingSeconds {
     if (status != GameStatus.countdown ||
@@ -49,6 +63,16 @@ class Game {
       countdownStartAt: _toDate(data['countdownStartAt']),
       countdownDurationSec: (data['countdownDurationSec'] as num?)?.toInt(),
       pinCount: (data['pinCount'] as num?)?.toInt(),
+      captureRadiusM: (data['captureRadiusM'] as num?)?.toInt(),
+      runnerSeeKillerRadiusM: (data['runnerSeeKillerRadiusM'] as num?)?.toInt(),
+      runnerSeeRunnerRadiusM: (data['runnerSeeRunnerRadiusM'] as num?)?.toInt(),
+      runnerSeeGeneratorRadiusM:
+          (data['runnerSeeGeneratorRadiusM'] as num?)?.toInt(),
+      killerDetectRunnerRadiusM:
+          (data['killerDetectRunnerRadiusM'] as num?)?.toInt(),
+      killerSeeGeneratorRadiusM:
+          (data['killerSeeGeneratorRadiusM'] as num?)?.toInt(),
+      gameDurationSec: (data['gameDurationSec'] as num?)?.toInt(),
     );
   }
 }

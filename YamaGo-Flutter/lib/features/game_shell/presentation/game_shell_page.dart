@@ -17,7 +17,9 @@ import 'package:yamago_flutter/features/chat/data/chat_repository.dart';
 import 'package:yamago_flutter/features/chat/domain/chat_message.dart';
 import 'package:yamago_flutter/features/game/application/player_location_updater.dart';
 import 'package:yamago_flutter/features/game/application/player_providers.dart';
+import 'package:yamago_flutter/features/game/data/game_repository.dart';
 import 'package:yamago_flutter/features/game/domain/player.dart';
+import 'package:yamago_flutter/features/game/presentation/game_settings_page.dart';
 import 'package:yamago_flutter/features/game/presentation/widgets/game_status_banner.dart';
 import 'package:yamago_flutter/features/game/presentation/widgets/player_hud.dart';
 import 'package:yamago_flutter/features/game/presentation/widgets/player_list_card.dart';
@@ -58,9 +60,11 @@ class _GameShellPageState extends State<GameShellPage> {
       GameSettingsSection(gameId: widget.gameId),
     ];
 
+    final titles = ['マップ', 'チャット', '設定'];
+
     return Scaffold(
       appBar: AppBar(
-        title: Text('ゲームID: ${widget.gameId}'),
+        title: Text(titles[_currentIndex]),
       ),
       body: IndexedStack(
         index: _currentIndex,
@@ -538,9 +542,21 @@ class GameSettingsSection extends ConsumerWidget {
                   const SizedBox(height: 16),
                   Card(
                     child: ListTile(
+                      leading: const Icon(Icons.tune),
+                      title: const Text('ゲーム設定'),
+                      subtitle: const Text('発電所数や視認距離、カウントダウンなどを調整'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        context.push(GameSettingsPage.path(gameId));
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Card(
+                    child: ListTile(
                       leading: const Icon(Icons.edit_location_alt_outlined),
-                      title: const Text('発電所ピンを編集'),
-                      subtitle: const Text('ドラッグ&ドロップで集合地点を調整できます'),
+                      title: const Text('発電所ピンを直接編集'),
+                      subtitle: const Text('ドラッグ&ドロップで集合地点を微調整できます'),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () {
                         context.push(PinEditorPage.path(gameId));
@@ -549,7 +565,11 @@ class GameSettingsSection extends ConsumerWidget {
                   ),
                 ],
                 const SizedBox(height: 16),
-                _ActionButtons(gameId: gameId),
+                _ActionButtons(
+                  gameId: gameId,
+                  ownerUid: gameState.value?.ownerUid ?? '',
+                  currentUid: user.uid,
+                ),
                 const SizedBox(height: 16),
                 const PrivacyReminderCard(),
               ],
@@ -568,9 +588,15 @@ class GameSettingsSection extends ConsumerWidget {
 }
 
 class _ActionButtons extends ConsumerStatefulWidget {
-  const _ActionButtons({required this.gameId});
+  const _ActionButtons({
+    required this.gameId,
+    required this.ownerUid,
+    required this.currentUid,
+  });
 
   final String gameId;
+  final String ownerUid;
+  final String currentUid;
 
   @override
   ConsumerState<_ActionButtons> createState() => _ActionButtonsState();
@@ -578,6 +604,9 @@ class _ActionButtons extends ConsumerStatefulWidget {
 
 class _ActionButtonsState extends ConsumerState<_ActionButtons> {
   bool _isLeaving = false;
+  bool _isClaimingOwner = false;
+
+  bool get _isOwner => widget.ownerUid == widget.currentUid;
 
   @override
   Widget build(BuildContext context) {
@@ -610,6 +639,68 @@ class _ActionButtonsState extends ConsumerState<_ActionButtons> {
           label: const Text('端末に保存されたニックネームをリセット'),
         ),
         const SizedBox(height: 8),
+        if (!_isOwner) ...[
+          ElevatedButton.icon(
+            onPressed: _isClaimingOwner
+                ? null
+                : () async {
+                    final confirmed = await showDialog<bool>(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: const Text('オーナー権限を取得'),
+                        content: const Text('自分をゲームのオーナーに変更します。よろしいですか？'),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.of(context).pop(false),
+                            child: const Text('キャンセル'),
+                          ),
+                          ElevatedButton(
+                            onPressed: () => Navigator.of(context).pop(true),
+                            child: const Text('取得する'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirmed != true) return;
+                    setState(() {
+                      _isClaimingOwner = true;
+                    });
+                    try {
+                      final repo = ref.read(gameRepositoryProvider);
+                      await repo.updateOwner(
+                        gameId: widget.gameId,
+                        newOwnerUid: widget.currentUid,
+                      );
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('オーナー権限を取得しました')),
+                        );
+                      }
+                    } catch (error) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('権限の取得に失敗しました: $error')),
+                        );
+                      }
+                    } finally {
+                      if (mounted) {
+                        setState(() {
+                          _isClaimingOwner = false;
+                        });
+                      }
+                    }
+                  },
+            icon: _isClaimingOwner
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.verified_user),
+            label: const Text('自分をオーナーにする'),
+          ),
+          const SizedBox(height: 8),
+        ],
         ElevatedButton.icon(
           onPressed: _isLeaving
               ? null
@@ -632,15 +723,14 @@ class _ActionButtonsState extends ConsumerState<_ActionButtons> {
                     ),
                   );
                   if (confirmed != true) return;
+                  final router = GoRouter.of(context);
                   setState(() {
                     _isLeaving = true;
                   });
                   try {
                     final controller = ref.read(gameExitControllerProvider);
                     await controller.leaveGame(gameId: widget.gameId);
-                    if (context.mounted) {
-                      context.go(WelcomePage.routePath);
-                    }
+                    router.goNamed(WelcomePage.routeName);
                   } catch (error) {
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -668,7 +758,7 @@ class _ActionButtonsState extends ConsumerState<_ActionButtons> {
                   ),
                 )
               : const Icon(Icons.logout),
-          label: const Text('ゲームから退出してログアウト'),
+          label: const Text('ログアウト'),
         ),
       ],
     );

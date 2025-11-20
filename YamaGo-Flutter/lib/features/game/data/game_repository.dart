@@ -19,10 +19,22 @@ class GameRepository {
 
   Future<String> createGame({required String ownerUid}) async {
     final docRef = _gameCollection.doc();
+    const defaultSettings = GameSettingsInput(
+      captureRadiusM: 100,
+      runnerSeeKillerRadiusM: 500,
+      runnerSeeRunnerRadiusM: 1000,
+      runnerSeeGeneratorRadiusM: 3000,
+      killerDetectRunnerRadiusM: 500,
+      killerSeeGeneratorRadiusM: 3000,
+      pinCount: 10,
+      countdownDurationSec: 900,
+      gameDurationSec: 7200,
+    );
     await docRef.set({
       'status': 'pending',
       'ownerUid': ownerUid,
       'createdAt': FieldValue.serverTimestamp(),
+      ...defaultSettings.toMap(),
     });
     return docRef.id;
   }
@@ -90,9 +102,54 @@ class GameRepository {
       'ownerUid': newOwnerUid,
     });
   }
+
+  Future<void> updateGameSettings({
+    required String gameId,
+    required GameSettingsInput settings,
+  }) {
+    return _gameCollection.doc(gameId).update(settings.toMap());
+  }
 }
 
 final gameRepositoryProvider = Provider<GameRepository>((ref) {
   final firestore = ref.watch(firestoreProvider);
   return GameRepository(firestore);
 });
+
+class GameSettingsInput {
+  const GameSettingsInput({
+    required this.captureRadiusM,
+    required this.runnerSeeKillerRadiusM,
+    required this.runnerSeeRunnerRadiusM,
+    required this.runnerSeeGeneratorRadiusM,
+    required this.killerDetectRunnerRadiusM,
+    required this.killerSeeGeneratorRadiusM,
+    required this.pinCount,
+    required this.countdownDurationSec,
+    required this.gameDurationSec,
+  });
+
+  final int captureRadiusM;
+  final int runnerSeeKillerRadiusM;
+  final int runnerSeeRunnerRadiusM;
+  final int runnerSeeGeneratorRadiusM;
+  final int killerDetectRunnerRadiusM;
+  final int killerSeeGeneratorRadiusM;
+  final int pinCount;
+  final int countdownDurationSec;
+  final int gameDurationSec;
+
+  Map<String, dynamic> toMap() {
+    return {
+      'captureRadiusM': captureRadiusM,
+      'runnerSeeKillerRadiusM': runnerSeeKillerRadiusM,
+      'runnerSeeRunnerRadiusM': runnerSeeRunnerRadiusM,
+      'runnerSeeGeneratorRadiusM': runnerSeeGeneratorRadiusM,
+      'killerDetectRunnerRadiusM': killerDetectRunnerRadiusM,
+      'killerSeeGeneratorRadiusM': killerSeeGeneratorRadiusM,
+      'pinCount': pinCount,
+      'countdownDurationSec': countdownDurationSec,
+      'gameDurationSec': gameDurationSec,
+    };
+  }
+}
