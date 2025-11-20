@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../domain/player.dart';
 
 class PlayerProfileCard extends StatelessWidget {
@@ -28,7 +29,7 @@ class PlayerProfileCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            _buildRow(theme, 'ゲームID', gameId),
+            _buildGameIdRow(context, theme),
             _buildRow(theme, 'ニックネーム', player.nickname),
             _buildRow(theme, '役割', _roleLabel(player.role)),
             _buildRow(theme, '状態', _statusLabel(player.status)),
@@ -71,5 +72,43 @@ class PlayerProfileCard extends StatelessWidget {
       case PlayerStatus.eliminated:
         return '離脱';
     }
+  }
+
+  Widget _buildGameIdRow(BuildContext context, ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text('ゲームID', style: theme.textTheme.bodySmall),
+          Flexible(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    gameId,
+                    textAlign: TextAlign.right,
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  icon: const Icon(Icons.copy, size: 18),
+                  tooltip: 'ゲームIDをコピー',
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: gameId));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('ゲームIDをコピーしました')),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

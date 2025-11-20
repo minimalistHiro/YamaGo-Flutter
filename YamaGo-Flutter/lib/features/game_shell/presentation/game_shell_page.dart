@@ -11,6 +11,7 @@ import 'package:yamago_flutter/core/location/location_service.dart';
 import 'package:yamago_flutter/core/location/yamanote_constants.dart';
 import 'package:yamago_flutter/core/services/firebase_providers.dart';
 import 'package:yamago_flutter/core/storage/local_profile_store.dart';
+import 'package:yamago_flutter/features/game/application/game_control_controller.dart';
 import 'package:yamago_flutter/features/game/application/game_exit_controller.dart';
 import 'package:yamago_flutter/features/chat/application/chat_providers.dart';
 import 'package:yamago_flutter/features/chat/data/chat_repository.dart';
@@ -18,6 +19,7 @@ import 'package:yamago_flutter/features/chat/domain/chat_message.dart';
 import 'package:yamago_flutter/features/game/application/player_location_updater.dart';
 import 'package:yamago_flutter/features/game/application/player_providers.dart';
 import 'package:yamago_flutter/features/game/data/game_repository.dart';
+import 'package:yamago_flutter/features/game/domain/game.dart';
 import 'package:yamago_flutter/features/game/domain/player.dart';
 import 'package:yamago_flutter/features/game/presentation/game_settings_page.dart';
 import 'package:yamago_flutter/features/game/presentation/role_assignment_page.dart';
@@ -121,6 +123,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     final locationState = ref.watch(locationStreamProvider);
     final playersState = ref.watch(playersStreamProvider(widget.gameId));
     final gameState = ref.watch(gameStreamProvider(widget.gameId));
+    final auth = ref.watch(firebaseAuthProvider);
     ref.watch(playerLocationUpdaterProvider(widget.gameId));
 
     ref.listen(locationStreamProvider, (previous, next) {
@@ -135,12 +138,31 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       });
     });
 
-    final markers = _buildMarkers(locationState, playersState);
+    final currentUid = auth.currentUser?.uid;
+    final markers = _buildMarkers(locationState, playersState, currentUid);
+    final captureRadius =
+        gameState.valueOrNull?.captureRadiusM?.toDouble();
+    final circleColor =
+        _captureCircleColor(playersState, currentUid);
+    final circles =
+        _buildCaptureCircles(locationState, captureRadius, circleColor);
 
     final overlay = _buildPermissionOverlay(
       context,
       permissionState,
       locationState,
+    );
+
+    final showStartButton = gameState.maybeWhen(
+      data: (game) =>
+          game != null &&
+          currentUid == game.ownerUid &&
+          (game.status == GameStatus.pending || game.status == GameStatus.ended),
+      orElse: () => false,
+    );
+    final countdownSeconds = gameState.maybeWhen(
+      data: (game) => game?.countdownDurationSec ?? 900,
+      orElse: () => 900,
     );
 
     return Stack(
@@ -159,6 +181,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
           zoomControlsEnabled: false,
           mapToolbarEnabled: false,
           markers: markers,
+          circles: circles,
           padding: const EdgeInsets.only(bottom: 96),
         ),
         if (overlay != null) overlay,
@@ -166,15 +189,33 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
           top: 16,
           left: 16,
           right: 16,
-          child: Column(
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              GameStatusBanner(gameState: gameState, gameId: widget.gameId),
-              const SizedBox(height: 8),
-              PlayerHud(playersState: playersState),
+              Expanded(
+                child: GameStatusBanner(
+                  gameState: gameState,
+                  gameId: widget.gameId,
+                ),
+              ),
+              const SizedBox(width: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 220),
+                child: PlayerHud(playersState: playersState),
+              ),
             ],
           ),
         ),
+        if (showStartButton)
+          Positioned(
+            left: 24,
+            right: 24,
+            bottom: 24,
+            child: _MapStartGameButton(
+              gameId: widget.gameId,
+              countdownSeconds: countdownSeconds,
+            ),
+          ),
       ],
     );
   }
@@ -182,6 +223,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   Set<Marker> _buildMarkers(
     AsyncValue<Position> locationState,
     AsyncValue<List<Player>> playersState,
+    String? currentUid,
   ) {
     final markers = <Marker>{
       Marker(
@@ -206,6 +248,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
 
     playersState.whenData((players) {
       for (final player in players) {
+        if (player.uid == currentUid) continue;
         final position = player.position;
         if (position == null) continue;
         markers.add(
@@ -220,6 +263,56 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     });
 
     return markers;
+  }
+
+  Set<Circle> _buildCaptureCircles(
+    AsyncValue<Position> locationState,
+    double? radiusMeters,
+    Color? color,
+  ) {
+    if (radiusMeters == null || radiusMeters <= 0) {
+      return const <Circle>{};
+    }
+    final position = locationState.valueOrNull;
+    if (position == null) {
+      return const <Circle>{};
+    }
+    return {
+      Circle(
+        circleId: const CircleId('capture-radius'),
+        center: LatLng(position.latitude, position.longitude),
+        radius: radiusMeters,
+        fillColor: (color ?? Colors.redAccent).withOpacity(0.15),
+        strokeColor: (color ?? Colors.redAccent).withOpacity(0.5),
+        strokeWidth: 2,
+      ),
+    };
+  }
+
+  Color? _captureCircleColor(
+    AsyncValue<List<Player>> playersState,
+    String? currentUid,
+  ) {
+    if (currentUid == null) {
+      return null;
+    }
+    final players = playersState.valueOrNull;
+    if (players == null) return null;
+    Player? currentPlayer;
+    for (final player in players) {
+      if (player.uid == currentUid) {
+        currentPlayer = player;
+        break;
+      }
+    }
+    if (currentPlayer == null) return null;
+    if (!currentPlayer.isActive ||
+        currentPlayer.status == PlayerStatus.downed) {
+      return Colors.grey;
+    }
+    return currentPlayer.role == PlayerRole.oni
+        ? Colors.redAccent
+        : Colors.green;
   }
 
   BitmapDescriptor _markerForPlayer(Player player) {
@@ -606,6 +699,90 @@ class GameSettingsSection extends ConsumerWidget {
   }
 }
 
+class _MapStartGameButton extends ConsumerStatefulWidget {
+  const _MapStartGameButton({
+    required this.gameId,
+    required this.countdownSeconds,
+  });
+
+  final String gameId;
+  final int countdownSeconds;
+
+  @override
+  ConsumerState<_MapStartGameButton> createState() =>
+      _MapStartGameButtonState();
+}
+
+class _MapStartGameButtonState
+    extends ConsumerState<_MapStartGameButton> {
+  bool _isStarting = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(32),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.25),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: FilledButton(
+        style: FilledButton.styleFrom(
+          backgroundColor: Colors.redAccent,
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+          textStyle: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(32),
+          ),
+        ),
+        onPressed: _isStarting ? null : _handlePressed,
+        child: _isStarting
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              )
+            : const Text('ゲームスタート'),
+      ),
+    );
+  }
+
+  Future<void> _handlePressed() async {
+    setState(() {
+      _isStarting = true;
+    });
+    try {
+      final controller = ref.read(gameControlControllerProvider);
+      await controller.startCountdown(
+        gameId: widget.gameId,
+        durationSeconds: widget.countdownSeconds,
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('ゲーム開始に失敗しました: $error')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isStarting = false;
+        });
+      }
+    }
+  }
+}
+
 class _ActionButtons extends ConsumerStatefulWidget {
   const _ActionButtons({
     required this.gameId,
@@ -634,31 +811,6 @@ class _ActionButtonsState extends ConsumerState<_ActionButtons> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        ElevatedButton.icon(
-          onPressed: () {
-            Clipboard.setData(ClipboardData(text: widget.gameId));
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('ゲームIDをコピーしました')),
-            );
-          },
-          icon: const Icon(Icons.copy),
-          label: const Text('ゲームIDをコピー'),
-        ),
-        const SizedBox(height: 8),
-        ElevatedButton.icon(
-          onPressed: () async {
-            final store = await ref.read(localProfileStoreProvider.future);
-            await store.clearProfile();
-            if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('ローカルニックネーム情報を削除しました')),
-              );
-            }
-          },
-          icon: const Icon(Icons.refresh),
-          label: const Text('端末に保存されたニックネームをリセット'),
-        ),
-        const SizedBox(height: 8),
         if (!_isOwner) ...[
           ElevatedButton.icon(
             onPressed: _isClaimingOwner

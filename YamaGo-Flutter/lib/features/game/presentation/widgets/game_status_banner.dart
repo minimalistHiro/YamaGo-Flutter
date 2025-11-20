@@ -3,9 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/services/firebase_providers.dart';
 import '../../domain/game.dart';
-import '../../domain/player.dart';
 import '../../../game/application/game_control_controller.dart';
-import '../../../game/application/player_providers.dart';
 
 class GameStatusBanner extends ConsumerWidget {
   const GameStatusBanner({
@@ -29,17 +27,9 @@ class GameStatusBanner extends ConsumerWidget {
         }
         final auth = ref.watch(firebaseAuthProvider);
         final user = auth.currentUser;
-        bool isOwner = false;
-        if (user != null) {
-          final playerState =
-              ref.watch(playerStreamProvider((gameId: gameId, uid: user.uid)));
-          isOwner = playerState.maybeWhen(
-            data: (player) => player?.role == PlayerRole.oni,
-            orElse: () => false,
-          );
-        }
+        final isOwner = user?.uid == game.ownerUid;
         final actionWidgets =
-            isOwner ? _buildActions(context, ref, game.status) : const <Widget>[];
+            isOwner ? _buildActions(context, ref, game) : const <Widget>[];
 
         return _BannerCard(
           title: _titleForStatus(game.status),
@@ -100,29 +90,13 @@ class GameStatusBanner extends ConsumerWidget {
   List<Widget> _buildActions(
     BuildContext context,
     WidgetRef ref,
-    GameStatus status,
+    Game game,
   ) {
     final controller = ref.read(gameControlControllerProvider);
-    switch (status) {
+    switch (game.status) {
       case GameStatus.pending:
-        return [
-          PopupMenuButton<int>(
-            onSelected: (seconds) => controller.startCountdown(
-              gameId: gameId,
-              durationSeconds: seconds,
-            ),
-            itemBuilder: (context) => const [
-              PopupMenuItem(value: 60, child: Text('1分前に開始')),
-              PopupMenuItem(value: 120, child: Text('2分前に開始')),
-              PopupMenuItem(value: 300, child: Text('5分前に開始')),
-            ],
-            child: const Text('カウントダウン開始'),
-          ),
-          TextButton(
-            onPressed: () => controller.startGame(gameId: gameId),
-            child: const Text('即時開始'),
-          ),
-        ];
+      case GameStatus.ended:
+        return const [];
       case GameStatus.countdown:
         return [
           TextButton(
@@ -137,8 +111,6 @@ class GameStatusBanner extends ConsumerWidget {
             child: const Text('ゲーム終了'),
           ),
         ];
-      case GameStatus.ended:
-        return const [];
     }
   }
 }
