@@ -772,7 +772,6 @@ class _CreateGamePageState extends ConsumerState<CreateGamePage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('ゲームを作成しました: $gameId')),
       );
-      await _navigateToGame(gameId);
     } catch (error) {
       if (!mounted) return;
       setState(() {

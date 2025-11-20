@@ -11,6 +11,7 @@ import 'package:yamago_flutter/core/location/location_service.dart';
 import 'package:yamago_flutter/core/location/yamanote_constants.dart';
 import 'package:yamago_flutter/core/services/firebase_providers.dart';
 import 'package:yamago_flutter/core/storage/local_profile_store.dart';
+import 'package:yamago_flutter/features/auth/application/auth_providers.dart';
 import 'package:yamago_flutter/features/game/application/game_control_controller.dart';
 import 'package:yamago_flutter/features/game/application/game_exit_controller.dart';
 import 'package:yamago_flutter/features/chat/application/chat_providers.dart';
@@ -30,7 +31,7 @@ import 'package:yamago_flutter/features/game/presentation/widgets/player_profile
 import 'package:yamago_flutter/features/onboarding/presentation/onboarding_pages.dart';
 import 'package:yamago_flutter/features/pins/presentation/pin_editor_page.dart';
 
-class GameShellPage extends StatefulWidget {
+class GameShellPage extends ConsumerStatefulWidget {
   const GameShellPage({
     super.key,
     required this.gameId,
@@ -43,16 +44,31 @@ class GameShellPage extends StatefulWidget {
   final String gameId;
 
   @override
-  State<GameShellPage> createState() => _GameShellPageState();
+  ConsumerState<GameShellPage> createState() => _GameShellPageState();
 }
 
-class _GameShellPageState extends State<GameShellPage> {
+class _GameShellPageState extends ConsumerState<GameShellPage> {
   int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_ensureSignedIn());
+  }
 
   void _handleTabSelected(int index) {
     setState(() {
       _currentIndex = index;
     });
+  }
+
+  Future<void> _ensureSignedIn() async {
+    try {
+      await ref.read(ensureAnonymousSignInProvider.future);
+    } catch (error, stackTrace) {
+      debugPrint('Failed to ensure FirebaseAuth sign-in: $error');
+      debugPrint('$stackTrace');
+    }
   }
 
   @override
