@@ -151,7 +151,6 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   bool _isCapturing = false;
   bool _isClearingPin = false;
   bool _showGeneratorClearedAlert = false;
-  Timer? _generatorAlertTimer;
   BitmapDescriptor? _downedMarkerDescriptor;
   BitmapDescriptor? _oniMarkerDescriptor;
   BitmapDescriptor? _runnerMarkerDescriptor;
@@ -161,6 +160,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   PlayerRole? _latestPlayerRole;
   GameStatus? _latestGameStatus;
   ProviderSubscription<AsyncValue<List<PinPoint>>>? _pinsSubscription;
+  ProviderSubscription<AsyncValue<Position>>? _locationSubscription;
+  bool _hasCenteredOnUserInitially = false;
 
   @override
   void initState() {
@@ -174,6 +175,14 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         });
       },
     );
+    _locationSubscription =
+        ref.listenManual<AsyncValue<Position>>(locationStreamProvider,
+            (previous, next) {
+      next.whenData((position) {
+        _latestUserLocation = LatLng(position.latitude, position.longitude);
+        _maybeCenterCameraOnUserInitially();
+      });
+    });
     unawaited(_loadCustomMarkers());
   }
 
@@ -181,8 +190,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   void dispose() {
     _statusTicker?.cancel();
     _mapController?.dispose();
-    _generatorAlertTimer?.cancel();
     _pinsSubscription?.close();
+    _locationSubscription?.close();
     super.dispose();
   }
 
@@ -203,19 +212,6 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         playerStreamProvider((gameId: widget.gameId, uid: currentUid)),
       );
     }
-
-    ref.listen(locationStreamProvider, (previous, next) {
-      next.whenData((position) {
-        final latLng = LatLng(position.latitude, position.longitude);
-        _cameraTarget = latLng;
-        _latestUserLocation = latLng;
-        unawaited(
-          _mapController?.animateCamera(
-            CameraUpdate.newLatLng(latLng),
-          ),
-        );
-      });
-    });
 
     final game = gameState.valueOrNull;
     final captureRadius = game?.captureRadiusM?.toDouble();
@@ -330,6 +326,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
           cameraTargetBounds: CameraTargetBounds(yamanoteBounds),
           onMapCreated: (controller) {
             _mapController ??= controller;
+            _maybeCenterCameraOnUserInitially();
           },
           myLocationEnabled: locationState.hasValue,
           myLocationButtonEnabled: false,
@@ -364,17 +361,17 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
           ),
         ),
         if (_showGeneratorClearedAlert && currentPlayer?.role == PlayerRole.oni)
-          Positioned(
-            top: 120,
-            left: 16,
-            right: 16,
-            child: SafeArea(
-              top: true,
-              bottom: false,
-              left: false,
-              right: false,
-              child: _GeneratorClearedAlert(
-                onDismissed: _dismissGeneratorClearedAlert,
+          Positioned.fill(
+            child: Container(
+              color: Colors.black54,
+              alignment: Alignment.center,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: _GeneratorClearedAlert(
+                    onDismissed: _dismissGeneratorClearedAlert,
+                  ),
+                ),
               ),
             ),
           ),
@@ -431,6 +428,21 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
             ),
           ),
         ),
+        if (currentPlayer != null)
+          Positioned(
+            left: 16,
+            bottom: myLocationButtonBottom,
+            child: SafeArea(
+              left: false,
+              top: false,
+              bottom: false,
+              minimum: const EdgeInsets.only(bottom: 16),
+              child: _RoleBadge(
+                role: currentPlayer!.role,
+                status: currentPlayer.status,
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -449,6 +461,24 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       _statusTicker = null;
       _isStatusTickerActive = false;
     }
+  }
+
+  void _maybeCenterCameraOnUserInitially() {
+    if (_hasCenteredOnUserInitially) {
+      return;
+    }
+    final controller = _mapController;
+    final target = _latestUserLocation;
+    if (controller == null || target == null) {
+      return;
+    }
+    _hasCenteredOnUserInitially = true;
+    _cameraTarget = target;
+    unawaited(
+      controller.animateCamera(
+        CameraUpdate.newLatLng(target),
+      ),
+    );
   }
 
   void _maybeTriggerAutoStart({
@@ -672,21 +702,12 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   }
 
   void _showGeneratorClearedAlertForPin(String _pinId) {
-    _generatorAlertTimer?.cancel();
-    _generatorAlertTimer = Timer(const Duration(seconds: 5), () {
-      if (!mounted) return;
-      setState(() {
-        _showGeneratorClearedAlert = false;
-      });
-    });
     setState(() {
       _showGeneratorClearedAlert = true;
     });
   }
 
   void _dismissGeneratorClearedAlert() {
-    _generatorAlertTimer?.cancel();
-    _generatorAlertTimer = null;
     if (_showGeneratorClearedAlert) {
       setState(() {
         _showGeneratorClearedAlert = false;
@@ -2191,6 +2212,62 @@ class _MapMyLocationButton extends StatelessWidget {
   }
 }
 
+class _RoleBadge extends StatelessWidget {
+  const _RoleBadge({
+    required this.role,
+    required this.status,
+  });
+
+  final PlayerRole role;
+  final PlayerStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isOni = role == PlayerRole.oni;
+    final isCapturedRunner =
+        !isOni && status != PlayerStatus.active;
+    final label =
+        isOni ? '鬼' : isCapturedRunner ? '逃走者（ダウン中）' : '逃走者';
+    final baseColor = isOni ? Colors.redAccent : Colors.green;
+    final color = isCapturedRunner
+        ? Colors.grey.shade600.withOpacity(0.9)
+        : baseColor.withOpacity(0.9);
+    final icon = isOni ? Icons.whatshot : Icons.directions_run;
+    final textColor = isCapturedRunner ? Colors.white70 : Colors.white;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(40),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black26,
+            offset: Offset(0, 2),
+            blurRadius: 4,
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 20, color: textColor),
+            const SizedBox(width: 8),
+            Text(
+              '役職: $label',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: textColor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _CaptureActionButton extends StatelessWidget {
   const _CaptureActionButton({
     required this.targetName,
@@ -2347,62 +2424,78 @@ class _GeneratorClearedAlert extends StatelessWidget {
     final theme = Theme.of(context);
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 250),
-      child: Material(
+      child: ConstrainedBox(
         key: const ValueKey('generator-cleared-alert'),
-        borderRadius: BorderRadius.circular(16),
-        elevation: 12,
-        color: const Color(0xFF0F1115).withOpacity(0.92),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-          child: Row(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    colors: [
-                      Color(0xFFFFC857),
-                      Color(0xFFFF9500),
-                    ],
+        constraints: const BoxConstraints(maxWidth: 400),
+        child: Material(
+          borderRadius: BorderRadius.circular(24),
+          elevation: 16,
+          color: const Color(0xFF0F1115).withOpacity(0.95),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 72,
+                  height: 72,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: [
+                        Color(0xFFFFC857),
+                        Color(0xFFFF9500),
+                      ],
+                    ),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(
+                    Icons.electric_bolt,
+                    size: 36,
+                    color: Colors.black87,
                   ),
                 ),
-                alignment: Alignment.center,
-                child: const Icon(
-                  Icons.electric_bolt,
-                  color: Colors.black87,
+                const SizedBox(height: 20),
+                Text(
+                  '発電所が解除されました',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '発電所が解除されました',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        color: Colors.white,
+                const SizedBox(height: 12),
+                Text(
+                  '逃走者が発電所を停止させました。地図を確認して即座に対応してください。',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: Colors.white70,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      backgroundColor: Colors.orangeAccent,
+                      foregroundColor: Colors.black,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: onDismissed,
+                    child: const Text(
+                      'OK',
+                      style: TextStyle(
+                        fontSize: 16,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '逃走者が発電所を停止させました。位置を確認して対応してください。',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: Colors.white70,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              IconButton(
-                onPressed: onDismissed,
-                icon: const Icon(Icons.close),
-                color: Colors.white70,
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
