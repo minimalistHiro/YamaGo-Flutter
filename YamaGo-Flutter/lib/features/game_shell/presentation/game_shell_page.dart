@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:ui' as ui;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -19,6 +21,7 @@ import 'package:yamago_flutter/features/chat/data/chat_repository.dart';
 import 'package:yamago_flutter/features/chat/domain/chat_message.dart';
 import 'package:yamago_flutter/features/game/application/player_location_updater.dart';
 import 'package:yamago_flutter/features/game/application/player_providers.dart';
+import 'package:yamago_flutter/features/game/data/capture_repository.dart';
 import 'package:yamago_flutter/features/game/data/game_repository.dart';
 import 'package:yamago_flutter/features/game/domain/game.dart';
 import 'package:yamago_flutter/features/game/domain/player.dart';
@@ -133,13 +136,25 @@ class GameMapSection extends ConsumerStatefulWidget {
 class _GameMapSectionState extends ConsumerState<GameMapSection> {
   GoogleMapController? _mapController;
   LatLng _cameraTarget = yamanoteCenter;
-  Timer? _countdownTimer;
-  bool _isCountdownTickerActive = false;
+  LatLng? _latestUserLocation;
+  Timer? _statusTicker;
+  bool _isStatusTickerActive = false;
   bool _countdownAutoStartTriggered = false;
+  bool _isLocatingUser = false;
+  bool _isCapturing = false;
+  BitmapDescriptor? _downedMarkerDescriptor;
+  BitmapDescriptor? _oniMarkerDescriptor;
+  BitmapDescriptor? _runnerMarkerDescriptor;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadCustomMarkers());
+  }
 
   @override
   void dispose() {
-    _countdownTimer?.cancel();
+    _statusTicker?.cancel();
     _mapController?.dispose();
     super.dispose();
   }
@@ -152,11 +167,20 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     final gameState = ref.watch(gameStreamProvider(widget.gameId));
     final auth = ref.watch(firebaseAuthProvider);
     ref.watch(playerLocationUpdaterProvider(widget.gameId));
+    final players = playersState.valueOrNull;
+    final currentUid = auth.currentUser?.uid;
+    AsyncValue<Player?>? currentPlayerState;
+    if (currentUid != null) {
+      currentPlayerState = ref.watch(
+        playerStreamProvider((gameId: widget.gameId, uid: currentUid)),
+      );
+    }
 
     ref.listen(locationStreamProvider, (previous, next) {
       next.whenData((position) {
         final latLng = LatLng(position.latitude, position.longitude);
         _cameraTarget = latLng;
+        _latestUserLocation = latLng;
         unawaited(
           _mapController?.animateCamera(
             CameraUpdate.newLatLng(latLng),
@@ -165,14 +189,28 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       });
     });
 
-    final currentUid = auth.currentUser?.uid;
     final markers = _buildMarkers(playersState, currentUid);
     final game = gameState.valueOrNull;
     final captureRadius = game?.captureRadiusM?.toDouble();
-    final currentPlayer = _currentPlayer(playersState, currentUid);
+    var currentPlayer = currentPlayerState?.valueOrNull;
+    currentPlayer ??= _currentPlayer(playersState, currentUid);
     final circleColor = _captureCircleColor(currentPlayer);
     final circles =
         _buildCaptureCircles(locationState, captureRadius, circleColor);
+    final latestPosition = locationState.valueOrNull;
+    final selfLatLng = _latestUserLocation ??
+        (latestPosition != null
+            ? LatLng(latestPosition.latitude, latestPosition.longitude)
+            : currentPlayer?.position);
+    final captureTargetInfo = _findCaptureTarget(
+      gameStatus: game?.status,
+      currentPlayer: currentPlayer,
+      captureRadiusMeters: captureRadius,
+      selfPosition: selfLatLng,
+      players: players,
+    );
+    final captureTarget = captureTargetInfo?.runner;
+    final captureTargetDistance = captureTargetInfo?.distanceMeters;
 
     final permissionOverlay = _buildPermissionOverlay(
       context,
@@ -180,10 +218,13 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       locationState,
     );
     final countdownRemainingSeconds = game?.countdownRemainingSeconds;
+    final runningRemainingSeconds = game?.runningRemainingSeconds;
     final isCountdownActive = game?.status == GameStatus.countdown &&
         countdownRemainingSeconds != null &&
         countdownRemainingSeconds > 0;
-    _updateCountdownTicker(isCountdownActive);
+    final hasRunningCountdown =
+        game?.status == GameStatus.running && (runningRemainingSeconds ?? 0) > 0;
+    _updateStatusTicker(isCountdownActive || hasRunningCountdown);
     final countdownOverlay = _buildCountdownOverlay(
       context: context,
       isActive: isCountdownActive,
@@ -210,6 +251,15 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       data: (game) => game?.countdownDurationSec ?? 900,
       orElse: () => 900,
     );
+    final isLocationPermissionGranted = permissionState.maybeWhen(
+      data: (status) => status == LocationPermissionStatus.granted,
+      orElse: () => false,
+    );
+    final bool isMyLocationButtonEnabled =
+        isLocationPermissionGranted && _mapController != null;
+    final bool showCaptureButton = captureTarget != null;
+    final double myLocationButtonBottom =
+        (showStartButton || showCaptureButton) ? 120.0 : 24.0;
 
     return Stack(
       children: [
@@ -263,23 +313,53 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
               countdownSeconds: countdownSeconds,
             ),
           ),
+        if (showCaptureButton && captureTarget != null)
+          Positioned(
+            left: 24,
+            right: 24,
+            bottom: 24,
+            child: _CaptureActionButton(
+              targetName: captureTarget.nickname,
+              distanceMeters: captureTargetDistance,
+              isLoading: _isCapturing,
+              onPressed: _isCapturing
+                  ? null
+                  : () => _handleCapturePressed(captureTarget),
+            ),
+          ),
+        Positioned(
+          right: 16,
+          bottom: myLocationButtonBottom,
+          child: SafeArea(
+            left: false,
+            top: false,
+            right: false,
+            minimum: const EdgeInsets.only(bottom: 16),
+            child: _MapMyLocationButton(
+              isLoading: _isLocatingUser,
+              onPressed: (!isMyLocationButtonEnabled || _isLocatingUser)
+                  ? null
+                  : _handleMyLocationButtonPressed,
+            ),
+          ),
+        ),
       ],
     );
   }
 
-  void _updateCountdownTicker(bool shouldRun) {
-    if (shouldRun && !_isCountdownTickerActive) {
-      _isCountdownTickerActive = true;
-      _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+  void _updateStatusTicker(bool shouldRun) {
+    if (shouldRun && !_isStatusTickerActive) {
+      _isStatusTickerActive = true;
+      _statusTicker = Timer.periodic(const Duration(seconds: 1), (_) {
         if (!mounted) return;
         setState(() {});
       });
       return;
     }
-    if (!shouldRun && _isCountdownTickerActive) {
-      _countdownTimer?.cancel();
-      _countdownTimer = null;
-      _isCountdownTickerActive = false;
+    if (!shouldRun && _isStatusTickerActive) {
+      _statusTicker?.cancel();
+      _statusTicker = null;
+      _isStatusTickerActive = false;
     }
   }
 
@@ -323,6 +403,233 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         );
       }
     }
+  }
+
+  Future<void> _handleMyLocationButtonPressed() async {
+    if (_mapController == null || _isLocatingUser) {
+      return;
+    }
+    setState(() {
+      _isLocatingUser = true;
+    });
+    try {
+      final status = await ref.read(locationPermissionStatusProvider.future);
+      if (status != LocationPermissionStatus.granted) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('現在地を取得するには位置情報の権限を許可してください。'),
+          ),
+        );
+        return;
+      }
+      LatLng? target = _latestUserLocation;
+      if (target == null) {
+        final position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+        );
+        target = LatLng(position.latitude, position.longitude);
+      }
+      if (target == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('現在地情報がまだ取得できていません。')),
+        );
+        return;
+      }
+      _latestUserLocation = target;
+      _cameraTarget = target;
+      await _mapController?.animateCamera(
+        CameraUpdate.newLatLng(target),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('現在地の取得に失敗しました: $error')),
+      );
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _isLocatingUser = false;
+      });
+    }
+  }
+
+  Future<void> _handleCapturePressed(Player target) async {
+    if (_isCapturing) {
+      return;
+    }
+    final auth = ref.read(firebaseAuthProvider);
+    final attackerUid = auth.currentUser?.uid;
+    if (attackerUid == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('サインイン情報を確認できませんでした')),
+      );
+      return;
+    }
+    setState(() {
+      _isCapturing = true;
+    });
+    try {
+      final repo = ref.read(captureRepositoryProvider);
+      await repo.captureRunner(
+        gameId: widget.gameId,
+        attackerUid: attackerUid,
+        victimUid: target.uid,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${target.nickname} を捕獲しました')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        final message = error is StateError ? error.message : error.toString();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('捕獲に失敗しました: $message')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCapturing = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadCustomMarkers() async {
+    try {
+      final results = await Future.wait([
+        _createMarkerDescriptor(
+          color: Colors.redAccent,
+          icon: Icons.whatshot,
+        ),
+        _createMarkerDescriptor(
+          color: Colors.green,
+          icon: Icons.run_circle,
+        ),
+        _createMarkerDescriptor(
+          color: Colors.grey.shade600,
+          icon: Icons.run_circle,
+        ),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _oniMarkerDescriptor = results[0];
+        _runnerMarkerDescriptor = results[1];
+        _downedMarkerDescriptor = results[2];
+      });
+    } catch (error) {
+      debugPrint('Failed to load custom markers: $error');
+    }
+  }
+
+  Future<BitmapDescriptor> _createMarkerDescriptor({
+    required Color color,
+    required IconData icon,
+  }) async {
+    const double width = 96;
+    const double height = 132;
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(recorder);
+    final fillPaint = ui.Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    final strokePaint = ui.Paint()
+      ..color = color.darken()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4;
+    final center = ui.Offset(width / 2, width / 2);
+    canvas.drawCircle(center, width / 2, fillPaint);
+    canvas.drawCircle(center, width / 2 - 2, strokePaint);
+    final tailPath = ui.Path()
+      ..moveTo(width / 2, height)
+      ..lineTo(width * 0.2, width * 0.75)
+      ..lineTo(width * 0.8, width * 0.75)
+      ..close();
+    canvas.drawPath(tailPath, fillPaint);
+    canvas.drawPath(tailPath, strokePaint);
+
+    final textPainter = TextPainter(
+      textDirection: ui.TextDirection.ltr,
+    );
+    final textSpan = TextSpan(
+      text: String.fromCharCode(icon.codePoint),
+      style: TextStyle(
+        fontSize: width * 0.65,
+        fontFamily: icon.fontFamily,
+        package: icon.fontPackage,
+        color: Colors.white,
+      ),
+    );
+    textPainter.text = textSpan;
+    textPainter.layout();
+    final iconOffset = ui.Offset(
+      center.dx - (textPainter.width / 2),
+      center.dy - (textPainter.height / 2),
+    );
+    textPainter.paint(canvas, iconOffset);
+
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(width.toInt(), height.toInt());
+    final bytes =
+        await image.toByteData(format: ui.ImageByteFormat.png);
+    final buffer = bytes?.buffer.asUint8List();
+    if (buffer == null) {
+      throw StateError('Failed to encode marker image');
+    }
+    return BitmapDescriptor.fromBytes(buffer);
+  }
+
+  _CaptureTargetInfo? _findCaptureTarget({
+    required GameStatus? gameStatus,
+    required Player? currentPlayer,
+    required double? captureRadiusMeters,
+    required LatLng? selfPosition,
+    required List<Player>? players,
+  }) {
+    if (gameStatus != GameStatus.running) return null;
+    if (currentPlayer == null || currentPlayer.role != PlayerRole.oni) {
+      return null;
+    }
+    if (captureRadiusMeters == null || captureRadiusMeters <= 0) {
+      return null;
+    }
+    if (selfPosition == null) return null;
+    if (players == null) return null;
+
+    Player? closestRunner;
+    double? closestDistance;
+
+    for (final player in players) {
+      if (player.uid == currentPlayer.uid) continue;
+      if (player.role != PlayerRole.runner) continue;
+      if (!player.isActive) continue;
+      if (player.status != PlayerStatus.active) continue;
+      final runnerPosition = player.position;
+      if (runnerPosition == null) continue;
+      final distance = Geolocator.distanceBetween(
+        selfPosition.latitude,
+        selfPosition.longitude,
+        runnerPosition.latitude,
+        runnerPosition.longitude,
+      );
+      if (distance > captureRadiusMeters) continue;
+      if (closestDistance == null || distance < closestDistance) {
+        closestDistance = distance;
+        closestRunner = player;
+      }
+    }
+
+    if (closestRunner == null || closestDistance == null) {
+      return null;
+    }
+    return _CaptureTargetInfo(
+      runner: closestRunner,
+      distanceMeters: closestDistance,
+    );
   }
 
   Set<Marker> _buildMarkers(
@@ -378,7 +685,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     if (currentPlayer == null) return null;
     if (!currentPlayer.isActive ||
         currentPlayer.status == PlayerStatus.downed) {
-      return Colors.grey;
+      return Colors.grey.shade500;
     }
     return currentPlayer.role == PlayerRole.oni
         ? Colors.redAccent
@@ -401,17 +708,16 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   }
 
   BitmapDescriptor _markerForPlayer(Player player) {
-    const oniHue = BitmapDescriptor.hueRed;
-    const runnerHue = BitmapDescriptor.hueGreen;
-    const downedHue = BitmapDescriptor.hueOrange;
-
     if (player.role == PlayerRole.oni) {
-      return BitmapDescriptor.defaultMarkerWithHue(oniHue);
+      return _oniMarkerDescriptor ??
+          BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed);
     }
     if (player.status == PlayerStatus.downed) {
-      return BitmapDescriptor.defaultMarkerWithHue(downedHue);
+      return _downedMarkerDescriptor ??
+          BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure);
     }
-    return BitmapDescriptor.defaultMarkerWithHue(runnerHue);
+    return _runnerMarkerDescriptor ??
+        BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen);
   }
 
   Widget? _buildPermissionOverlay(
@@ -713,44 +1019,57 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
 
           return Column(
             children: [
-              SafeArea(
-                bottom: false,
-                child: _ChatHeader(
-                  title: player.role == PlayerRole.oni ? '鬼チャット' : '逃走者チャット',
-                  palette: palette,
-                ),
-              ),
-              const SizedBox(height: 8),
               Expanded(
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 200),
-                  child: chatState.when(
-                    data: (messages) {
-                      _scheduleScrollToBottom();
-                      if (messages.isEmpty) {
-                        return _EmptyChatMessage(palette: palette);
-                      }
-                      return _MessagesListView(
-                        messages: messages,
-                        palette: palette,
-                        playersByUid: playersByUid,
-                        currentUid: user.uid,
-                        scrollController: _scrollController,
-                      );
-                    },
-                    loading: () => const Center(
-                      child: CircularProgressIndicator(),
-                    ),
-                    error: (error, _) => Center(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 24),
-                        child: Text(
-                          'チャットを読み込めませんでした。\n$error',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(color: Colors.white70),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onTap: _dismissKeyboard,
+                  child: Column(
+                    children: [
+                      SafeArea(
+                        bottom: false,
+                        child: _ChatHeader(
+                          title: player.role == PlayerRole.oni
+                              ? '鬼チャット'
+                              : '逃走者チャット',
+                          palette: palette,
                         ),
                       ),
-                    ),
+                      const SizedBox(height: 8),
+                      Expanded(
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 200),
+                          child: chatState.when(
+                            data: (messages) {
+                              _scheduleScrollToBottom();
+                              if (messages.isEmpty) {
+                                return _EmptyChatMessage(palette: palette);
+                              }
+                              return _MessagesListView(
+                                messages: messages,
+                                palette: palette,
+                                playersByUid: playersByUid,
+                                currentUid: user.uid,
+                                scrollController: _scrollController,
+                              );
+                            },
+                            loading: () => const Center(
+                              child: CircularProgressIndicator(),
+                            ),
+                            error: (error, _) => Center(
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 24),
+                                child: Text(
+                                  'チャットを読み込めませんでした。\n$error',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(color: Colors.white70),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -784,6 +1103,10 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
     });
   }
 
+  void _dismissKeyboard() {
+    FocusScope.of(context).unfocus();
+  }
+
   Future<void> _sendMessage(BuildContext context, Player player) async {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
@@ -804,7 +1127,7 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
       );
       _controller.clear();
       if (context.mounted) {
-        FocusScope.of(context).unfocus();
+        _dismissKeyboard();
       }
     } catch (error) {
       if (context.mounted) {
@@ -874,7 +1197,7 @@ class _MessagesListView extends StatelessWidget {
                     _ChatAvatar(avatarUrl: avatarUrl, palette: palette),
                     const SizedBox(width: 8),
                   ],
-                  if (displayName.isNotEmpty)
+                  if (!isMine && displayName.isNotEmpty)
                     Text(
                       displayName,
                       style: TextStyle(
@@ -1444,6 +1767,125 @@ class _MapStartGameButton extends ConsumerStatefulWidget {
   @override
   ConsumerState<_MapStartGameButton> createState() =>
       _MapStartGameButtonState();
+}
+
+class _MapMyLocationButton extends StatelessWidget {
+  const _MapMyLocationButton({
+    required this.onPressed,
+    required this.isLoading,
+  });
+
+  final VoidCallback? onPressed;
+  final bool isLoading;
+
+  @override
+  Widget build(BuildContext context) {
+    return FloatingActionButton.small(
+      heroTag: 'game-map-my-location',
+      onPressed: isLoading ? null : onPressed,
+      child: isLoading
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
+            )
+          : const Icon(Icons.my_location),
+    );
+  }
+}
+
+class _CaptureActionButton extends StatelessWidget {
+  const _CaptureActionButton({
+    required this.targetName,
+    required this.distanceMeters,
+    required this.isLoading,
+    required this.onPressed,
+  });
+
+  final String targetName;
+  final double? distanceMeters;
+  final bool isLoading;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final distanceLabel = distanceMeters == null
+        ? null
+        : (distanceMeters! >= 100
+            ? distanceMeters!.toStringAsFixed(0)
+            : distanceMeters!.toStringAsFixed(1));
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(32),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.25),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: FilledButton.icon(
+        style: FilledButton.styleFrom(
+          backgroundColor: Colors.redAccent,
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+          foregroundColor: Colors.white,
+          textStyle: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+        onPressed: isLoading ? null : onPressed,
+        icon: isLoading
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              )
+            : const Icon(Icons.gpp_maybe),
+        label: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('捕獲する'),
+            Text(
+              distanceLabel == null
+                  ? targetName
+                  : '$targetName（約${distanceLabel}m）',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: Colors.white.withOpacity(0.9),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CaptureTargetInfo {
+  const _CaptureTargetInfo({
+    required this.runner,
+    required this.distanceMeters,
+  });
+
+  final Player runner;
+  final double distanceMeters;
+}
+
+extension on Color {
+  Color darken([double amount = 0.2]) {
+    final hsl = HSLColor.fromColor(this);
+    final lightness = (hsl.lightness - amount).clamp(0.0, 1.0);
+    return hsl.withLightness(lightness).toColor();
+  }
 }
 
 class _MapStartGameButtonState extends ConsumerState<_MapStartGameButton> {

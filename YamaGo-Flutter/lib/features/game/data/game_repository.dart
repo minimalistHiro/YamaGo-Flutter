@@ -51,6 +51,7 @@ class GameRepository {
     required String uid,
     required String nickname,
     required String role,
+    String? avatarUrl,
   }) async {
     final playerRef =
         _gameCollection.doc(gameId).collection('players').doc(uid);
@@ -67,6 +68,7 @@ class GameRepository {
         'capturedTimes': 0,
       },
       'joinedAt': FieldValue.serverTimestamp(),
+      if (avatarUrl != null) 'avatarUrl': avatarUrl,
     }, SetOptions(merge: true));
   }
 
@@ -88,10 +90,27 @@ class GameRepository {
     });
   }
 
-  Future<void> endGame({required String gameId}) {
-    return _gameCollection.doc(gameId).update({
+  Future<void> endGame({required String gameId}) async {
+    await _gameCollection.doc(gameId).update({
       'status': 'ended',
     });
+    await _reviveDownedRunners(gameId: gameId);
+  }
+
+  Future<void> _reviveDownedRunners({required String gameId}) async {
+    final playersRef = _gameCollection.doc(gameId).collection('players');
+    final snapshot = await playersRef
+        .where('role', isEqualTo: 'runner')
+        .where('status', isEqualTo: 'downed')
+        .get();
+    if (snapshot.docs.isEmpty) return;
+    final batch = _firestore.batch();
+    for (final doc in snapshot.docs) {
+      batch.update(doc.reference, {
+        'status': 'active',
+      });
+    }
+    await batch.commit();
   }
 
   Future<void> updateOwner({

@@ -66,10 +66,12 @@ class GameStatusBanner extends ConsumerWidget {
       case GameStatus.pending:
         return '参加者を待っています';
       case GameStatus.countdown:
-        final remaining = game.countdownRemainingSeconds;
-        if (remaining == null) return 'まもなく開始します';
-        return 'ゲーム開始まで ${_formatSeconds(remaining)}';
+        return 'まもなく開始します';
       case GameStatus.running:
+        final remaining = game.runningRemainingSeconds;
+        if (remaining != null) {
+          return '残り時間\n${_formatHms(remaining)}';
+        }
         final elapsed = game.runningElapsedSeconds;
         if (elapsed == null) return '位置情報を共有しましょう';
         return '経過時間 ${_formatSeconds(elapsed)}';
@@ -87,6 +89,16 @@ class GameStatusBanner extends ConsumerWidget {
     return '$secs秒';
   }
 
+  String _formatHms(int seconds) {
+    final safeSeconds = seconds < 0 ? 0 : seconds;
+    final hours = safeSeconds ~/ 3600;
+    final minutes = (safeSeconds % 3600) ~/ 60;
+    final secs = safeSeconds % 60;
+    return '${hours}時間'
+        '${minutes.toString().padLeft(2, '0')}分'
+        '${secs.toString().padLeft(2, '0')}秒';
+  }
+
   List<Widget> _buildActions(
     BuildContext context,
     WidgetRef ref,
@@ -98,19 +110,9 @@ class GameStatusBanner extends ConsumerWidget {
       case GameStatus.ended:
         return const [];
       case GameStatus.countdown:
-        return [
-          TextButton(
-            onPressed: () => controller.startGame(gameId: gameId),
-            child: const Text('即時開始'),
-          ),
-        ];
+        return const [];
       case GameStatus.running:
-        return [
-          TextButton(
-            onPressed: () => controller.endGame(gameId: gameId),
-            child: const Text('ゲーム終了'),
-          ),
-        ];
+        return const [];
     }
   }
 }

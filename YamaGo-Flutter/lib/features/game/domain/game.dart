@@ -53,6 +53,18 @@ class Game {
     return DateTime.now().difference(startAt!).inSeconds;
   }
 
+  int? get runningRemainingSeconds {
+    if (status != GameStatus.running ||
+        startAt == null ||
+        gameDurationSec == null) {
+      return null;
+    }
+    final elapsed = DateTime.now().difference(startAt!).inSeconds;
+    final remaining = gameDurationSec! - elapsed;
+    if (remaining < 0) return 0;
+    return remaining;
+  }
+
   static Game fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? {};
     return Game(
