@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -126,9 +127,13 @@ class GameMapSection extends ConsumerStatefulWidget {
 class _GameMapSectionState extends ConsumerState<GameMapSection> {
   GoogleMapController? _mapController;
   LatLng _cameraTarget = yamanoteCenter;
+  Timer? _countdownTimer;
+  bool _isCountdownTickerActive = false;
+  bool _countdownAutoStartTriggered = false;
 
   @override
   void dispose() {
+    _countdownTimer?.cancel();
     _mapController?.dispose();
     super.dispose();
   }
@@ -155,25 +160,44 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     });
 
     final currentUid = auth.currentUser?.uid;
-    final markers = _buildMarkers(locationState, playersState, currentUid);
-    final captureRadius =
-        gameState.valueOrNull?.captureRadiusM?.toDouble();
-    final circleColor =
-        _captureCircleColor(playersState, currentUid);
+    final markers = _buildMarkers(playersState, currentUid);
+    final game = gameState.valueOrNull;
+    final captureRadius = game?.captureRadiusM?.toDouble();
+    final currentPlayer = _currentPlayer(playersState, currentUid);
+    final circleColor = _captureCircleColor(currentPlayer);
     final circles =
         _buildCaptureCircles(locationState, captureRadius, circleColor);
 
-    final overlay = _buildPermissionOverlay(
+    final permissionOverlay = _buildPermissionOverlay(
       context,
       permissionState,
       locationState,
+    );
+    final countdownRemainingSeconds = game?.countdownRemainingSeconds;
+    final isCountdownActive = game?.status == GameStatus.countdown &&
+        countdownRemainingSeconds != null &&
+        countdownRemainingSeconds > 0;
+    _updateCountdownTicker(isCountdownActive);
+    final countdownOverlay = _buildCountdownOverlay(
+      context: context,
+      isActive: isCountdownActive,
+      remainingSeconds: countdownRemainingSeconds,
+      role: currentPlayer?.role,
+    );
+    _maybeTriggerAutoStart(
+      game: game,
+      currentUid: currentUid,
+      context: context,
+      isCountdownActive: isCountdownActive,
+      remainingSeconds: countdownRemainingSeconds,
     );
 
     final showStartButton = gameState.maybeWhen(
       data: (game) =>
           game != null &&
           currentUid == game.ownerUid &&
-          (game.status == GameStatus.pending || game.status == GameStatus.ended),
+          (game.status == GameStatus.pending ||
+              game.status == GameStatus.ended),
       orElse: () => false,
     );
     final countdownSeconds = gameState.maybeWhen(
@@ -200,7 +224,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
           circles: circles,
           padding: const EdgeInsets.only(bottom: 96),
         ),
-        if (overlay != null) overlay,
+        if (permissionOverlay != null) permissionOverlay,
+        if (countdownOverlay != null) countdownOverlay,
         Positioned(
           top: 16,
           left: 16,
@@ -236,31 +261,69 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     );
   }
 
+  void _updateCountdownTicker(bool shouldRun) {
+    if (shouldRun && !_isCountdownTickerActive) {
+      _isCountdownTickerActive = true;
+      _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted) return;
+        setState(() {});
+      });
+      return;
+    }
+    if (!shouldRun && _isCountdownTickerActive) {
+      _countdownTimer?.cancel();
+      _countdownTimer = null;
+      _isCountdownTickerActive = false;
+    }
+  }
+
+  void _maybeTriggerAutoStart({
+    required Game? game,
+    required String? currentUid,
+    required BuildContext context,
+    required bool isCountdownActive,
+    required int? remainingSeconds,
+  }) {
+    if (game == null ||
+        currentUid == null ||
+        game.status != GameStatus.countdown ||
+        game.ownerUid != currentUid) {
+      _countdownAutoStartTriggered = false;
+      return;
+    }
+    if (isCountdownActive) {
+      _countdownAutoStartTriggered = false;
+      return;
+    }
+    if (remainingSeconds == null) {
+      _countdownAutoStartTriggered = false;
+      return;
+    }
+    if (remainingSeconds <= 0 && !_countdownAutoStartTriggered) {
+      _countdownAutoStartTriggered = true;
+      unawaited(_startGameAfterCountdown(context));
+    }
+  }
+
+  Future<void> _startGameAfterCountdown(BuildContext context) async {
+    try {
+      final controller = ref.read(gameControlControllerProvider);
+      await controller.startGame(gameId: widget.gameId);
+    } catch (error) {
+      _countdownAutoStartTriggered = false;
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('ゲーム開始に失敗しました: $error')),
+        );
+      }
+    }
+  }
+
   Set<Marker> _buildMarkers(
-    AsyncValue<Position> locationState,
     AsyncValue<List<Player>> playersState,
     String? currentUid,
   ) {
-    final markers = <Marker>{
-      Marker(
-        markerId: const MarkerId('center'),
-        position: yamanoteCenter,
-        infoWindow: const InfoWindow(title: '山手線中心'),
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-      ),
-    };
-
-    locationState.whenData((position) {
-      markers.add(
-        Marker(
-          markerId: const MarkerId('you'),
-          position: LatLng(position.latitude, position.longitude),
-          infoWindow: const InfoWindow(title: 'あなた'),
-          icon:
-              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
-        ),
-      );
-    });
+    final markers = <Marker>{};
 
     playersState.whenData((players) {
       for (final player in players) {
@@ -305,22 +368,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     };
   }
 
-  Color? _captureCircleColor(
-    AsyncValue<List<Player>> playersState,
-    String? currentUid,
-  ) {
-    if (currentUid == null) {
-      return null;
-    }
-    final players = playersState.valueOrNull;
-    if (players == null) return null;
-    Player? currentPlayer;
-    for (final player in players) {
-      if (player.uid == currentUid) {
-        currentPlayer = player;
-        break;
-      }
-    }
+  Color? _captureCircleColor(Player? currentPlayer) {
     if (currentPlayer == null) return null;
     if (!currentPlayer.isActive ||
         currentPlayer.status == PlayerStatus.downed) {
@@ -329,6 +377,21 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     return currentPlayer.role == PlayerRole.oni
         ? Colors.redAccent
         : Colors.green;
+  }
+
+  Player? _currentPlayer(
+    AsyncValue<List<Player>> playersState,
+    String? currentUid,
+  ) {
+    if (currentUid == null) return null;
+    final players = playersState.valueOrNull;
+    if (players == null) return null;
+    for (final player in players) {
+      if (player.uid == currentUid) {
+        return player;
+      }
+    }
+    return null;
   }
 
   BitmapDescriptor _markerForPlayer(Player player) {
@@ -413,6 +476,123 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         },
       ),
     );
+  }
+
+  Widget? _buildCountdownOverlay({
+    required BuildContext context,
+    required bool isActive,
+    required int? remainingSeconds,
+    required PlayerRole? role,
+  }) {
+    if (!isActive || remainingSeconds == null || role == null) {
+      return null;
+    }
+    final formatted = _formatCountdown(remainingSeconds);
+    return switch (role) {
+      PlayerRole.oni => _buildOniCountdownOverlay(context, formatted),
+      PlayerRole.runner => _buildRunnerCountdownOverlay(context, formatted),
+    };
+  }
+
+  Widget _buildOniCountdownOverlay(
+    BuildContext context,
+    String formattedTime,
+  ) {
+    final theme = Theme.of(context);
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Container(
+          color: Colors.black.withOpacity(0.75),
+          alignment: Alignment.center,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                formattedTime,
+                style: theme.textTheme.displayMedium?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 2,
+                    ) ??
+                    const TextStyle(
+                      fontSize: 64,
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 2,
+                    ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                '鬼のスタートまで',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 18,
+                  letterSpacing: 1.2,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRunnerCountdownOverlay(
+    BuildContext context,
+    String formattedTime,
+  ) {
+    final theme = Theme.of(context);
+    return Positioned(
+      right: 16,
+      bottom: 140,
+      child: IgnorePointer(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface.withOpacity(0.9),
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.15),
+                blurRadius: 10,
+                offset: const Offset(0, 6),
+              ),
+            ],
+            border: Border.all(
+              color: theme.colorScheme.outline.withOpacity(0.4),
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '鬼が出発するまで',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  formattedTime,
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatCountdown(int seconds) {
+    final minutes = seconds ~/ 60;
+    final secs = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
   }
 }
 
@@ -697,6 +877,7 @@ class GameSettingsSection extends ConsumerWidget {
                   gameId: gameId,
                   ownerUid: gameState.value?.ownerUid ?? '',
                   currentUid: user.uid,
+                  gameStatus: gameState.value?.status,
                 ),
                 const SizedBox(height: 16),
                 const PrivacyReminderCard(),
@@ -729,8 +910,7 @@ class _MapStartGameButton extends ConsumerStatefulWidget {
       _MapStartGameButtonState();
 }
 
-class _MapStartGameButtonState
-    extends ConsumerState<_MapStartGameButton> {
+class _MapStartGameButtonState extends ConsumerState<_MapStartGameButton> {
   bool _isStarting = false;
 
   @override
@@ -804,11 +984,13 @@ class _ActionButtons extends ConsumerStatefulWidget {
     required this.gameId,
     required this.ownerUid,
     required this.currentUid,
+    required this.gameStatus,
   });
 
   final String gameId;
   final String ownerUid;
   final String currentUid;
+  final GameStatus? gameStatus;
 
   @override
   ConsumerState<_ActionButtons> createState() => _ActionButtonsState();
@@ -818,8 +1000,14 @@ class _ActionButtonsState extends ConsumerState<_ActionButtons> {
   bool _isLeaving = false;
   bool _isClaimingOwner = false;
   bool _isDeletingGame = false;
+  bool _isEndingGame = false;
 
   bool get _isOwner => widget.ownerUid == widget.currentUid;
+  bool get _showEndGameButton {
+    final status = widget.gameStatus;
+    if (!_isOwner || status == null) return false;
+    return status == GameStatus.countdown || status == GameStatus.running;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -886,6 +1074,74 @@ class _ActionButtonsState extends ConsumerState<_ActionButtons> {
                   )
                 : const Icon(Icons.verified_user),
             label: const Text('自分をオーナーにする'),
+          ),
+          const SizedBox(height: 8),
+        ],
+        if (_showEndGameButton) ...[
+          ElevatedButton.icon(
+            onPressed: _isEndingGame
+                ? null
+                : () async {
+                    final confirmed = await showDialog<bool>(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: const Text('ゲームを終了'),
+                        content: const Text(
+                          '現在のゲームを終了して結果画面に移行します。よろしいですか？',
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.of(context).pop(false),
+                            child: const Text('キャンセル'),
+                          ),
+                          ElevatedButton(
+                            onPressed: () => Navigator.of(context).pop(true),
+                            child: const Text('終了する'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirmed != true) return;
+                    setState(() {
+                      _isEndingGame = true;
+                    });
+                    try {
+                      final controller =
+                          ref.read(gameControlControllerProvider);
+                      await controller.endGame(gameId: widget.gameId);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('ゲームを終了しました')),
+                        );
+                      }
+                    } catch (error) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('ゲームの終了に失敗しました: $error')),
+                        );
+                      }
+                    } finally {
+                      if (mounted) {
+                        setState(() {
+                          _isEndingGame = false;
+                        });
+                      }
+                    }
+                  },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.deepPurple,
+            ),
+            icon: _isEndingGame
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : const Icon(Icons.stop_circle_outlined),
+            label: const Text('ゲームを終了'),
           ),
           const SizedBox(height: 8),
         ],
