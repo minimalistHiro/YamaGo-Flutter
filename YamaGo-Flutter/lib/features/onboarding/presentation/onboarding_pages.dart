@@ -387,6 +387,7 @@ class _JoinPageState extends ConsumerState<JoinPage> {
         gameId: gameId,
         nickname: nickname,
         uid: user.uid,
+        avatarBytes: _avatarBytes,
       );
       if (!mounted) return;
       _goToMap(gameId);

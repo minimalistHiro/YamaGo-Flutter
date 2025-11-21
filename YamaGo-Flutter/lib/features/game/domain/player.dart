@@ -14,6 +14,7 @@ class Player {
     required this.position,
     required this.updatedAt,
     required this.status,
+    this.avatarUrl,
   });
 
   final String uid;
@@ -23,6 +24,7 @@ class Player {
   final LatLng? position;
   final DateTime? updatedAt;
   final PlayerStatus status;
+  final String? avatarUrl;
 
   Player copyWith({
     String? nickname,
@@ -31,6 +33,7 @@ class Player {
     LatLng? position,
     DateTime? updatedAt,
     PlayerStatus? status,
+    String? avatarUrl,
   }) {
     return Player(
       uid: uid,
@@ -40,6 +43,7 @@ class Player {
       position: position ?? this.position,
       updatedAt: updatedAt ?? this.updatedAt,
       status: status ?? this.status,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
     );
   }
 
@@ -65,6 +69,7 @@ class Player {
       position: lat != null && lng != null ? LatLng(lat, lng) : null,
       updatedAt: updatedAt,
       status: status,
+      avatarUrl: data['avatarUrl'] as String?,
     );
   }
 }

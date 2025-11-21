@@ -59,6 +59,8 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
     final pins = pinsState.value ?? const <PinPoint>[];
     pinsState.whenData(_maybeCenterOnPins);
     final displayPins = _resolvedPins(pins, pinCountLimit);
+    final activePinIndex =
+        _activePinId == null ? -1 : displayPins.indexWhere((p) => p.id == _activePinId);
 
     final hiddenPinCount = pinCountLimit == null
         ? 0
@@ -84,7 +86,10 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
                     zoom: 12.5,
                   ),
                   cameraTargetBounds: CameraTargetBounds(yamanoteBounds),
-                  markers: _buildMarkers(displayPins),
+                  markers: _buildMarkers(
+                    pins: displayPins,
+                    activePinId: _activePinId,
+                  ),
                   onMapCreated: (controller) {
                     _mapController ??= controller;
                   },
@@ -117,6 +122,21 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
                     !pinsState.isLoading)
                   const _MessageOverlay(
                     message: '発電所のピンがまだ生成されていません。\nゲーム設定で再配置を実行してください。',
+                  ),
+                if (displayPins.isNotEmpty)
+                  Positioned(
+                    top: 16,
+                    left: 16,
+                    right: 16,
+                    child: SafeArea(
+                      child: _DragHintBanner(
+                        isSaving: _isSaving,
+                        activePinLabel: activePinIndex >= 0
+                            ? '#${activePinIndex + 1}'
+                            : null,
+                        errorMessage: _errorMessage,
+                      ),
+                    ),
                   ),
               ],
             ),
@@ -154,23 +174,34 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
     return pins.take(sanitizedLimit).toList(growable: false);
   }
 
-  Set<Marker> _buildMarkers(List<PinPoint> pins) {
+  Set<Marker> _buildMarkers({
+    required List<PinPoint> pins,
+    required String? activePinId,
+  }) {
     final markers = <Marker>{};
 
-    for (final pin in pins) {
+    for (var index = 0; index < pins.length; index++) {
+      final pin = pins[index];
       final position = LatLng(pin.lat, pin.lng);
       final hue = switch (pin.status) {
         PinStatus.pending => BitmapDescriptor.hueYellow,
         PinStatus.clearing => BitmapDescriptor.hueOrange,
         PinStatus.cleared => BitmapDescriptor.hueGreen,
       };
+      final isActive = pin.id == activePinId;
       markers.add(
         Marker(
           markerId: MarkerId(pin.id),
           position: position,
           draggable: true,
-          icon: BitmapDescriptor.defaultMarkerWithHue(hue),
-          infoWindow: InfoWindow(title: '発電所ピン', snippet: pin.id),
+          icon: BitmapDescriptor.defaultMarkerWithHue(
+            isActive ? BitmapDescriptor.hueAzure : hue,
+          ),
+          infoWindow: InfoWindow(
+            title: '発電所ピン #${index + 1}',
+            snippet: pin.id,
+          ),
+          zIndex: isActive ? 1000 : 0,
           onDragStart: (_) => _handleDragStart(pin.id),
           onDragEnd: (nextPosition) =>
               _handleDragEnd(pin.id, nextPosition.latitude, nextPosition.longitude),
@@ -224,6 +255,62 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
         _activePinId = null;
       });
     }
+  }
+}
+
+class _DragHintBanner extends StatelessWidget {
+  const _DragHintBanner({
+    required this.isSaving,
+    required this.activePinLabel,
+    required this.errorMessage,
+  });
+
+  final bool isSaving;
+  final String? activePinLabel;
+  final String? errorMessage;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isError = errorMessage != null;
+    final message =
+        errorMessage ?? (activePinLabel != null ? '$activePinLabel を移動中…' : 'ピンをドラッグ&ドロップして位置を調整できます');
+    final colorScheme = theme.colorScheme;
+    return Card(
+      color: isError
+          ? colorScheme.errorContainer
+          : colorScheme.surface.withOpacity(0.92),
+      elevation: 6,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+        child: Row(
+          children: [
+            if (isSaving && !isError)
+              const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              Icon(
+                isError ? Icons.error_outline : Icons.touch_app_outlined,
+                color: isError ? colorScheme.error : colorScheme.primary,
+              ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                message,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: isError
+                      ? colorScheme.onErrorContainer
+                      : colorScheme.onSurface,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
