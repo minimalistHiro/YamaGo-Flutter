@@ -21,8 +21,12 @@ class GameControlController {
 
   Future<void> startGame({
     required String gameId,
-    int? pinCount,
   }) async {
+    await _repository.startGame(gameId: gameId);
+  }
+
+  Future<void> endGame({required String gameId, int? pinCount}) async {
+    await _repository.endGame(gameId: gameId);
     final resolvedPinCount = await _resolvePinCount(gameId, pinCount);
     if (resolvedPinCount != null) {
       await _pinRepository.reseedPinsWithRandomLocations(
@@ -30,11 +34,6 @@ class GameControlController {
         targetCount: resolvedPinCount,
       );
     }
-    await _repository.startGame(gameId: gameId);
-  }
-
-  Future<void> endGame({required String gameId}) {
-    return _repository.endGame(gameId: gameId);
   }
 
   Future<int?> _resolvePinCount(String gameId, int? providedCount) async {

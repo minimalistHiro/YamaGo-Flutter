@@ -151,12 +151,18 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   bool _isCapturing = false;
   bool _isClearingPin = false;
   bool _showGeneratorClearedAlert = false;
+  static const int _pinClearDurationSeconds = 10;
+  Timer? _pinClearTimer;
+  int? _pinClearRemainingSeconds;
+  String? _activeClearingPinId;
   BitmapDescriptor? _downedMarkerDescriptor;
   BitmapDescriptor? _oniMarkerDescriptor;
   BitmapDescriptor? _runnerMarkerDescriptor;
   BitmapDescriptor? _generatorPinMarkerDescriptor;
   BitmapDescriptor? _clearedPinMarkerDescriptor;
   final Set<String> _knownClearedPinIds = <String>{};
+  List<PinPoint> _latestPins = const [];
+  double? _latestCaptureRadiusMeters;
   PlayerRole? _latestPlayerRole;
   GameStatus? _latestGameStatus;
   ProviderSubscription<AsyncValue<List<PinPoint>>>? _pinsSubscription;
@@ -171,7 +177,10 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       (previous, next) {
         next.whenData((pins) {
           if (!mounted) return;
+          _latestPins = pins;
           _handlePinClearedNotifications(pins);
+          _handleActiveClearingPinSnapshot(pins);
+          _maybeCancelClearingWhenOutOfRange();
         });
       },
     );
@@ -181,6 +190,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       next.whenData((position) {
         _latestUserLocation = LatLng(position.latitude, position.longitude);
         _maybeCenterCameraOnUserInitially();
+        _maybeCancelClearingWhenOutOfRange();
       });
     });
     unawaited(_loadCustomMarkers());
@@ -189,6 +199,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   @override
   void dispose() {
     _statusTicker?.cancel();
+    _pinClearTimer?.cancel();
     _mapController?.dispose();
     _pinsSubscription?.close();
     _locationSubscription?.close();
@@ -215,6 +226,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
 
     final game = gameState.valueOrNull;
     final captureRadius = game?.captureRadiusM?.toDouble();
+    _latestCaptureRadiusMeters = captureRadius;
     var currentPlayer = currentPlayerState?.valueOrNull;
     currentPlayer ??= _currentPlayer(playersState, currentUid);
     final circleColor = _captureCircleColor(currentPlayer);
@@ -235,8 +247,13 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     final captureTarget = captureTargetInfo?.runner;
     final captureTargetDistance = captureTargetInfo?.distanceMeters;
     final pins = pinsState.valueOrNull;
+    if (pins != null) {
+      _latestPins = pins;
+    }
     _latestPlayerRole = currentPlayer?.role;
     _latestGameStatus = game?.status;
+    _maybeCancelClearingWhenPlayerUnavailable(currentPlayer);
+    _maybeCancelClearingWhenGameInactive(game);
     final nearbyPinInfo = _findNearbyPin(
       gameStatus: game?.status,
       currentPlayer: currentPlayer,
@@ -246,6 +263,14 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     );
     final nearbyPin = nearbyPinInfo?.pin;
     final nearbyPinDistance = nearbyPinInfo?.distanceMeters;
+    final bool isCurrentlyClearing =
+        _isClearingPin && _activeClearingPinId != null;
+    final PinPoint? activeClearingPin = isCurrentlyClearing
+        ? _findPinById(_activeClearingPinId!, pins)
+        : null;
+    final double? activeClearingDistance = isCurrentlyClearing
+        ? _distanceToPin(activeClearingPin, selfLatLng)
+        : null;
     final playerMarkers = _buildPlayerMarkers(
       playersState: playersState,
       currentUid: currentUid,
@@ -310,7 +335,14 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     final bool isMyLocationButtonEnabled =
         isLocationPermissionGranted && _mapController != null;
     final bool showCaptureButton = captureTarget != null;
+    final int? pinCountdownSeconds = _pinClearRemainingSeconds;
     final bool showClearButton = nearbyPin != null;
+    final double? clearButtonDistance =
+        isCurrentlyClearing ? activeClearingDistance : nearbyPinDistance;
+    final bool showRunnerClearingOverlay =
+        (pinCountdownSeconds ?? 0) > 0 &&
+            currentPlayer?.role == PlayerRole.runner &&
+            isCurrentlyClearing;
     final bool hasPrimaryAction =
         showStartButton || showCaptureButton || showClearButton;
     final double myLocationButtonBottom = hasPrimaryAction ? 120.0 : 24.0;
@@ -375,6 +407,21 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
               ),
             ),
           ),
+        if (showRunnerClearingOverlay && pinCountdownSeconds != null)
+          Positioned.fill(
+            child: Container(
+              color: Colors.black54,
+              alignment: Alignment.center,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: _GeneratorClearingCountdownAlert(
+                    remainingSeconds: pinCountdownSeconds,
+                  ),
+                ),
+              ),
+            ),
+          ),
         if (showStartButton)
           Positioned(
             left: 24,
@@ -399,15 +446,16 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
                   : () => _handleCapturePressed(captureTarget),
             ),
           ),
-        if (showClearButton && nearbyPin != null)
+        if (showClearButton && !_isClearingPin)
           Positioned(
             left: 24,
             right: 24,
             bottom: 24,
             child: _ClearPinButton(
-              distanceMeters: nearbyPinDistance,
+              distanceMeters: clearButtonDistance,
               isLoading: _isClearingPin,
-              onPressed: _isClearingPin
+              countdownSeconds: _pinClearRemainingSeconds,
+              onPressed: _isClearingPin || nearbyPin == null
                   ? null
                   : () => _handleClearPinPressed(nearbyPin),
             ),
@@ -505,25 +553,16 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     }
     if (remainingSeconds <= 0 && !_countdownAutoStartTriggered) {
       _countdownAutoStartTriggered = true;
-      unawaited(
-        _startGameAfterCountdown(
-          context,
-          pinCount: game.pinCount,
-        ),
-      );
+      unawaited(_startGameAfterCountdown(context));
     }
   }
 
   Future<void> _startGameAfterCountdown(
-    BuildContext context, {
-    int? pinCount,
-  }) async {
+    BuildContext context,
+  ) async {
     try {
       final controller = ref.read(gameControlControllerProvider);
-      await controller.startGame(
-        gameId: widget.gameId,
-        pinCount: pinCount,
-      );
+      await controller.startGame(gameId: widget.gameId);
     } catch (error) {
       _countdownAutoStartTriggered = false;
       if (context.mounted) {
@@ -639,35 +678,204 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       );
       return;
     }
-    setState(() {
-      _isClearingPin = true;
-    });
     try {
+      setState(() {
+        _isClearingPin = true;
+        _activeClearingPinId = pin.id;
+        _pinClearRemainingSeconds = _pinClearDurationSeconds;
+      });
+      _startPinClearTimer();
       final repo = ref.read(pinRepositoryProvider);
       await repo.updatePinStatus(
         gameId: widget.gameId,
         pinId: pin.id,
-        status: PinStatus.cleared,
+        status: PinStatus.clearing,
       );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('発電所を解除しました')),
-        );
-      }
     } catch (error) {
-      if (mounted) {
-        final message = error is StateError ? error.message : error.toString();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('発電所の解除に失敗しました: $message')),
-        );
+      final message = error is StateError ? error.message : error.toString();
+      await _cancelPinClearing(
+        resetStatus: false,
+        message: '発電所の解除を開始できませんでした: $message',
+      );
+    }
+  }
+
+  void _startPinClearTimer() {
+    _pinClearTimer?.cancel();
+    _pinClearTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final remaining = _pinClearRemainingSeconds;
+      if (remaining == null) {
+        return;
       }
-    } finally {
-      if (mounted) {
+      final nextValue = remaining - 1;
+      if (!mounted) return;
+      if (nextValue <= 0) {
         setState(() {
-          _isClearingPin = false;
+          _pinClearRemainingSeconds = 0;
+        });
+        _pinClearTimer?.cancel();
+        _pinClearTimer = null;
+        unawaited(_finalizePinClearing());
+      } else {
+        setState(() {
+          _pinClearRemainingSeconds = nextValue;
         });
       }
+    });
+  }
+
+  Future<void> _finalizePinClearing() async {
+    final pinId = _activeClearingPinId;
+    if (pinId == null) {
+      _resetPinClearingState();
+      return;
     }
+    final repo = ref.read(pinRepositoryProvider);
+    try {
+      await repo.updatePinStatus(
+        gameId: widget.gameId,
+        pinId: pinId,
+        status: PinStatus.cleared,
+      );
+      _resetPinClearingState();
+      _showSnackBar('発電所を解除しました');
+    } catch (error) {
+      try {
+        await repo.updatePinStatus(
+          gameId: widget.gameId,
+          pinId: pinId,
+          status: PinStatus.pending,
+        );
+      } catch (resetError) {
+        debugPrint('Failed to reset pin after clear failure: $resetError');
+      }
+      _resetPinClearingState();
+      final message = error is StateError ? error.message : error.toString();
+      _showSnackBar('発電所の解除に失敗しました: $message');
+    }
+  }
+
+  Future<void> _cancelPinClearing({
+    bool resetStatus = false,
+    String? message,
+  }) async {
+    if (!_isClearingPin && _activeClearingPinId == null) {
+      if (message != null) {
+        _showSnackBar(message);
+      }
+      return;
+    }
+    final pinId = _activeClearingPinId;
+    _resetPinClearingState();
+    if (resetStatus && pinId != null) {
+      final repo = ref.read(pinRepositoryProvider);
+      try {
+        await repo.updatePinStatus(
+          gameId: widget.gameId,
+          pinId: pinId,
+          status: PinStatus.pending,
+        );
+      } catch (error) {
+        debugPrint('Failed to reset pin status: $error');
+      }
+    }
+    if (message != null) {
+      _showSnackBar(message);
+    }
+  }
+
+  void _resetPinClearingState() {
+    _pinClearTimer?.cancel();
+    _pinClearTimer = null;
+    if (!mounted) return;
+    if (!_isClearingPin &&
+        _pinClearRemainingSeconds == null &&
+        _activeClearingPinId == null) {
+      return;
+    }
+    setState(() {
+      _isClearingPin = false;
+      _pinClearRemainingSeconds = null;
+      _activeClearingPinId = null;
+    });
+  }
+
+  void _maybeCancelClearingWhenOutOfRange() {
+    if (!_isClearingPin || _activeClearingPinId == null) return;
+    final radius = _latestCaptureRadiusMeters;
+    final selfPosition = _latestUserLocation;
+    if (radius == null || radius <= 0) return;
+    if (selfPosition == null) return;
+    final pin = _findPinById(_activeClearingPinId!);
+    final distance = _distanceToPin(pin, selfPosition);
+    if (distance != null && distance > radius) {
+      unawaited(
+        _cancelPinClearing(
+          resetStatus: true,
+          message: '発電所から離れたため解除が中断されました',
+        ),
+      );
+    }
+  }
+
+  void _handleActiveClearingPinSnapshot(List<PinPoint> pins) {
+    final activeId = _activeClearingPinId;
+    if (activeId == null || !_isClearingPin) return;
+    final pin = _findPinById(activeId, pins);
+    if (pin == null) {
+      _resetPinClearingState();
+      return;
+    }
+    switch (pin.status) {
+      case PinStatus.clearing:
+        return;
+      case PinStatus.cleared:
+        _resetPinClearingState();
+        _showSnackBar('他の逃走者が先に発電所を解除しました');
+        break;
+      case PinStatus.pending:
+        _resetPinClearingState();
+        _showSnackBar('解除が中断されました');
+        break;
+    }
+  }
+
+  void _maybeCancelClearingWhenPlayerUnavailable(Player? player) {
+    if (!_isClearingPin || player == null) return;
+    final canContinue = player.role == PlayerRole.runner &&
+        player.isActive &&
+        player.status == PlayerStatus.active;
+    if (canContinue) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_isClearingPin) return;
+      unawaited(
+        _cancelPinClearing(
+          resetStatus: true,
+          message: '解除が中断されました',
+        ),
+      );
+    });
+  }
+
+  void _maybeCancelClearingWhenGameInactive(Game? game) {
+    if (!_isClearingPin) return;
+    if (game == null || game.status == GameStatus.running) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_isClearingPin) return;
+      unawaited(
+        _cancelPinClearing(
+          resetStatus: true,
+          message: 'ゲームの状態により解除が中断されました',
+        ),
+      );
+    });
+  }
+
+  void _showSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   void _handlePinClearedNotifications(List<PinPoint> pins) {
@@ -902,6 +1110,31 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     return _NearbyPinInfo(
       pin: closestPin,
       distanceMeters: closestDistance,
+    );
+  }
+
+  PinPoint? _findPinById(
+    String id, [
+    List<PinPoint>? pins,
+  ]) {
+    final source = pins ?? _latestPins;
+    for (final pin in source) {
+      if (pin.id == id) {
+        return pin;
+      }
+    }
+    return null;
+  }
+
+  double? _distanceToPin(PinPoint? pin, LatLng? selfPosition) {
+    if (pin == null || selfPosition == null) {
+      return null;
+    }
+    return Geolocator.distanceBetween(
+      selfPosition.latitude,
+      selfPosition.longitude,
+      pin.lat,
+      pin.lng,
     );
   }
 
@@ -2152,6 +2385,7 @@ class GameSettingsSection extends ConsumerWidget {
                   ownerUid: gameState.value?.ownerUid ?? '',
                   currentUid: user.uid,
                   gameStatus: gameState.value?.status,
+                  pinCount: gameState.value?.pinCount,
                 ),
                 const SizedBox(height: 16),
                 const PrivacyReminderCard(),
@@ -2345,11 +2579,13 @@ class _ClearPinButton extends StatelessWidget {
   const _ClearPinButton({
     required this.distanceMeters,
     required this.isLoading,
+    this.countdownSeconds,
     required this.onPressed,
   });
 
   final double? distanceMeters;
   final bool isLoading;
+  final int? countdownSeconds;
   final VoidCallback? onPressed;
 
   @override
@@ -2381,22 +2617,24 @@ class _ClearPinButton extends StatelessWidget {
             color: Colors.white,
           ),
         ),
-        onPressed: isLoading ? null : onPressed,
-        icon: isLoading
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                ),
-              )
-            : const Icon(Icons.electric_bolt),
+        onPressed:
+            countdownSeconds != null || isLoading ? null : onPressed,
+        icon: countdownSeconds != null
+            ? const Icon(Icons.timer)
+            : isLoading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : const Icon(Icons.electric_bolt),
         label: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('解除する'),
             Text(
               distanceLabel == null
                   ? '発電所'
@@ -2497,6 +2735,78 @@ class _GeneratorClearedAlert extends StatelessWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GeneratorClearingCountdownAlert extends StatelessWidget {
+  const _GeneratorClearingCountdownAlert({
+    required this.remainingSeconds,
+  });
+
+  final int remainingSeconds;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final clampedSeconds = remainingSeconds.clamp(0, 999);
+    return Material(
+      borderRadius: BorderRadius.circular(24),
+      elevation: 16,
+      color: const Color(0xFF0F1115).withOpacity(0.95),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [
+                    Color(0xFFFFC857),
+                    Color(0xFFFF9500),
+                  ],
+                ),
+              ),
+              alignment: Alignment.center,
+              child: const Icon(
+                Icons.electric_bolt,
+                size: 36,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              '発電所を解除中…',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.headlineSmall?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              '解除完了まで残り${clampedSeconds}秒',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyLarge?.copyWith(
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 24),
+            const SizedBox(
+              width: 48,
+              height: 48,
+              child: CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.orangeAccent),
+                strokeWidth: 4,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -2606,12 +2916,14 @@ class _ActionButtons extends ConsumerStatefulWidget {
     required this.ownerUid,
     required this.currentUid,
     required this.gameStatus,
+    this.pinCount,
   });
 
   final String gameId;
   final String ownerUid;
   final String currentUid;
   final GameStatus? gameStatus;
+  final int? pinCount;
 
   @override
   ConsumerState<_ActionButtons> createState() => _ActionButtonsState();
@@ -2729,7 +3041,10 @@ class _ActionButtonsState extends ConsumerState<_ActionButtons> {
                     try {
                       final controller =
                           ref.read(gameControlControllerProvider);
-                      await controller.endGame(gameId: widget.gameId);
+                      await controller.endGame(
+                        gameId: widget.gameId,
+                        pinCount: widget.pinCount,
+                      );
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(content: Text('ゲームを終了しました')),
