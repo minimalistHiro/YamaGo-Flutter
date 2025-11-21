@@ -1,8 +1,6 @@
 import 'dart:async';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
@@ -11,10 +9,11 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:yamago_flutter/core/location/location_service.dart';
 import 'package:yamago_flutter/core/location/yamanote_constants.dart';
 import 'package:yamago_flutter/core/services/firebase_providers.dart';
-import 'package:yamago_flutter/core/storage/local_profile_store.dart';
 import 'package:yamago_flutter/features/auth/application/auth_providers.dart';
 import 'package:yamago_flutter/features/game/application/game_control_controller.dart';
 import 'package:yamago_flutter/features/game/application/game_exit_controller.dart';
+import 'package:intl/intl.dart';
+
 import 'package:yamago_flutter/features/chat/application/chat_providers.dart';
 import 'package:yamago_flutter/features/chat/data/chat_repository.dart';
 import 'package:yamago_flutter/features/chat/domain/chat_message.dart';
@@ -24,6 +23,7 @@ import 'package:yamago_flutter/features/game/data/game_repository.dart';
 import 'package:yamago_flutter/features/game/domain/game.dart';
 import 'package:yamago_flutter/features/game/domain/player.dart';
 import 'package:yamago_flutter/features/game/presentation/game_settings_page.dart';
+import 'package:yamago_flutter/features/game/presentation/player_profile_edit_page.dart';
 import 'package:yamago_flutter/features/game/presentation/role_assignment_page.dart';
 import 'package:yamago_flutter/features/game/presentation/widgets/game_status_banner.dart';
 import 'package:yamago_flutter/features/game/presentation/widgets/player_hud.dart';
@@ -82,10 +82,16 @@ class _GameShellPageState extends ConsumerState<GameShellPage> {
 
     final titles = ['マップ', 'チャット', '設定'];
 
-    return Scaffold(
-      appBar: AppBar(
+    AppBar? appBar;
+    if (_currentIndex != 1) {
+      appBar = AppBar(
         title: Text(titles[_currentIndex]),
-      ),
+      );
+    }
+
+    return Scaffold(
+      appBar: appBar,
+      extendBodyBehindAppBar: _currentIndex == 1,
       body: IndexedStack(
         index: _currentIndex,
         children: sections,
@@ -653,11 +659,13 @@ class GameChatSection extends ConsumerStatefulWidget {
 
 class _GameChatSectionState extends ConsumerState<GameChatSection> {
   final _controller = TextEditingController();
+  final _scrollController = ScrollController();
   bool _sending = false;
 
   @override
   void dispose() {
     _controller.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -673,84 +681,107 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
       playerStreamProvider((gameId: widget.gameId, uid: user.uid)),
     );
 
-    return playerState.when(
-      data: (player) {
-        if (player == null) {
-          return const Center(child: Text('プレイヤー情報が見つかりません'));
-        }
-        final chatState = ref.watch(
-          chatMessagesProvider(
-            (gameId: widget.gameId, role: player.role),
-          ),
-        );
-        return Column(
-          children: [
-            Expanded(
-              child: chatState.when(
-                data: (messages) {
-                  if (messages.isEmpty) {
-                    return const Center(child: Text('まだメッセージがありません'));
-                  }
-                  return ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: messages.length,
-                    itemBuilder: (context, index) {
-                      final message = messages[index];
-                      return ListTile(
-                        title: Text(message.nickname),
-                        subtitle: Text(message.message),
-                        trailing: Text(
-                          TimeOfDay.fromDateTime(message.timestamp)
-                              .format(context),
-                        ),
+    final playersState = ref.watch(playersStreamProvider(widget.gameId));
+    final playersByUid = {
+      for (final player in playersState.valueOrNull ?? const <Player>[])
+        player.uid: player,
+    };
+
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color(0xFF00090E),
+            Color(0xFF03161B),
+            Color(0xFF041F25),
+          ],
+        ),
+      ),
+      child: playerState.when(
+        data: (player) {
+          if (player == null) {
+            return const Center(child: Text('プレイヤー情報が見つかりません'));
+          }
+          final palette = _ChatPalette.fromRole(player.role);
+          final chatState = ref.watch(
+            chatMessagesProvider(
+              (gameId: widget.gameId, role: player.role),
+            ),
+          );
+
+          return Column(
+            children: [
+              SafeArea(
+                bottom: false,
+                child: _ChatHeader(
+                  title: player.role == PlayerRole.oni ? '鬼チャット' : '逃走者チャット',
+                  palette: palette,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  child: chatState.when(
+                    data: (messages) {
+                      _scheduleScrollToBottom();
+                      if (messages.isEmpty) {
+                        return _EmptyChatMessage(palette: palette);
+                      }
+                      return _MessagesListView(
+                        messages: messages,
+                        palette: palette,
+                        playersByUid: playersByUid,
+                        currentUid: user.uid,
+                        scrollController: _scrollController,
                       );
                     },
-                  );
-                },
-                loading: () => const Center(child: CircularProgressIndicator()),
-                error: (error, _) =>
-                    Center(child: Text('チャット取得に失敗しました: $error')),
-              ),
-            ),
-            SafeArea(
-              top: false,
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _controller,
-                        decoration: const InputDecoration(
-                          hintText: 'メッセージを入力',
+                    loading: () => const Center(
+                      child: CircularProgressIndicator(),
+                    ),
+                    error: (error, _) => Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        child: Text(
+                          'チャットを読み込めませんでした。\n$error',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.white70),
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      onPressed:
-                          _sending ? null : () => _sendMessage(context, player),
-                      icon: _sending
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.send),
-                    ),
-                  ],
+                  ),
                 ),
               ),
-            ),
-          ],
-        );
-      },
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, _) => Center(
-        child: Text('プレイヤー情報の取得に失敗しました: $error'),
+              _ChatComposer(
+                controller: _controller,
+                sending: _sending,
+                palette: palette,
+                role: player.role,
+                onSendRequested: () => _sendMessage(context, player),
+              ),
+            ],
+          );
+        },
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (error, _) => Center(
+          child: Text('プレイヤー情報の取得に失敗しました: $error'),
+        ),
       ),
     );
+  }
+
+  void _scheduleScrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      _scrollController.animateTo(
+        position.maxScrollExtent,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   Future<void> _sendMessage(BuildContext context, Player player) async {
@@ -772,6 +803,9 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
         message: text,
       );
       _controller.clear();
+      if (context.mounted) {
+        FocusScope.of(context).unfocus();
+      }
     } catch (error) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -785,6 +819,502 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
         });
       }
     }
+  }
+}
+
+class _MessagesListView extends StatelessWidget {
+  const _MessagesListView({
+    required this.messages,
+    required this.palette,
+    required this.playersByUid,
+    required this.currentUid,
+    required this.scrollController,
+  });
+
+  final List<ChatMessage> messages;
+  final _ChatPalette palette;
+  final Map<String, Player> playersByUid;
+  final String currentUid;
+  final ScrollController scrollController;
+
+  @override
+  Widget build(BuildContext context) {
+    if (messages.isEmpty) {
+      return _EmptyChatMessage(palette: palette);
+    }
+    final width = MediaQuery.sizeOf(context).width;
+    final maxBubbleWidth = width * 0.8;
+    return ListView.builder(
+      key: ValueKey(messages.length),
+      controller: scrollController,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+      physics: const BouncingScrollPhysics(),
+      itemCount: messages.length,
+      itemBuilder: (context, index) {
+        final message = messages[index];
+        final isMine = message.uid == currentUid;
+        final playerProfile = playersByUid[message.uid];
+        final displayName = message.nickname.isNotEmpty
+            ? message.nickname
+            : playerProfile?.nickname ?? '';
+        final avatarUrl = playerProfile?.avatarUrl;
+        final formattedTime = DateFormat('HH:mm').format(message.timestamp);
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Column(
+            crossAxisAlignment:
+                isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment:
+                    isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
+                children: [
+                  if (!isMine) ...[
+                    _ChatAvatar(avatarUrl: avatarUrl, palette: palette),
+                    const SizedBox(width: 8),
+                  ],
+                  if (displayName.isNotEmpty)
+                    Text(
+                      displayName,
+                      style: TextStyle(
+                        fontSize: 10,
+                        letterSpacing: 2.5,
+                        color: palette.mutedText.withOpacity(0.9),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Align(
+                alignment:
+                    isMine ? Alignment.centerRight : Alignment.centerLeft,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: maxBubbleWidth),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: isMine ? palette.mineBubbleGradient : null,
+                      color: isMine ? null : palette.otherBubbleColor,
+                      borderRadius: BorderRadius.only(
+                        topLeft: const Radius.circular(20),
+                        topRight: const Radius.circular(20),
+                        bottomLeft: Radius.circular(isMine ? 20 : 6),
+                        bottomRight: Radius.circular(isMine ? 6 : 20),
+                      ),
+                      border: isMine
+                          ? null
+                          : Border.all(
+                              color: palette.accentColor.withOpacity(0.25),
+                            ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: palette.shadowColor,
+                          blurRadius: 18,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                      child: Text(
+                        message.message,
+                        style: TextStyle(
+                          color: isMine ? Colors.white : palette.bodyText,
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                formattedTime,
+                style: TextStyle(
+                  fontSize: 10,
+                  letterSpacing: 2,
+                  color: palette.mutedText,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ChatHeader extends StatelessWidget {
+  const _ChatHeader({
+    required this.title,
+    required this.palette,
+  });
+
+  final String title;
+  final _ChatPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: palette.headerGradient),
+        borderRadius: const BorderRadius.only(
+          bottomLeft: Radius.circular(28),
+          bottomRight: Radius.circular(28),
+        ),
+        border: Border(
+          bottom: BorderSide(
+            color: palette.accentColor.withOpacity(0.4),
+            width: 1.5,
+          ),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: palette.accentColor.withOpacity(0.25),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'TEAM CHANNEL',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.7),
+              letterSpacing: 4,
+              fontSize: 10,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 2,
+              color: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChatAvatar extends StatelessWidget {
+  const _ChatAvatar({
+    required this.avatarUrl,
+    required this.palette,
+  });
+
+  final String? avatarUrl;
+  final _ChatPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: palette.accentColor.withOpacity(0.35)),
+        color: Colors.black.withOpacity(0.4),
+        boxShadow: [
+          BoxShadow(
+            color: palette.accentColor.withOpacity(0.25),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: avatarUrl != null && avatarUrl!.isNotEmpty
+          ? Image.network(
+              avatarUrl!,
+              fit: BoxFit.cover,
+              errorBuilder: (context, _, __) => Icon(
+                Icons.person,
+                size: 18,
+                color: palette.accentColor.withOpacity(0.7),
+              ),
+            )
+          : Icon(
+              Icons.person,
+              size: 18,
+              color: palette.accentColor.withOpacity(0.7),
+            ),
+    );
+  }
+}
+
+class _ChatComposer extends StatelessWidget {
+  const _ChatComposer({
+    required this.controller,
+    required this.sending,
+    required this.palette,
+    required this.role,
+    required this.onSendRequested,
+  });
+
+  final TextEditingController controller;
+  final bool sending;
+  final _ChatPalette palette;
+  final PlayerRole role;
+  final VoidCallback onSendRequested;
+
+  @override
+  Widget build(BuildContext context) {
+    final hint =
+        role == PlayerRole.oni ? '鬼チャットにメッセージを入力...' : '逃走者チャットにメッセージを入力...';
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        child: ValueListenableBuilder<TextEditingValue>(
+          valueListenable: controller,
+          builder: (context, value, _) {
+            final canSend = value.text.trim().isNotEmpty;
+            final counterText =
+                value.text.isEmpty ? null : '${value.text.length}/200';
+            return Row(
+              children: [
+                Expanded(
+                  child: Stack(
+                    children: [
+                      TextField(
+                        controller: controller,
+                        maxLines: 4,
+                        minLines: 1,
+                        maxLength: 200,
+                        buildCounter: (_,
+                                {int? currentLength,
+                                int? maxLength,
+                                bool? isFocused}) =>
+                            null,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: InputDecoration(
+                          hintText: hint,
+                          hintStyle: TextStyle(color: palette.mutedText),
+                          filled: true,
+                          fillColor: Colors.black.withOpacity(0.35),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            borderSide: BorderSide(
+                              color: palette.accentColor.withOpacity(0.4),
+                            ),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            borderSide: BorderSide(
+                              color: palette.accentColor.withOpacity(0.4),
+                            ),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            borderSide: BorderSide(color: palette.accentColor),
+                          ),
+                          contentPadding:
+                              const EdgeInsets.fromLTRB(16, 14, 48, 14),
+                        ),
+                        cursorColor: palette.accentColor,
+                      ),
+                      if (counterText != null)
+                        Positioned(
+                          right: 12,
+                          top: 12,
+                          child: Text(
+                            counterText,
+                            style: TextStyle(
+                              fontSize: 10,
+                              letterSpacing: 2,
+                              color: palette.mutedText,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 56,
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: _GradientButton(
+                      palette: palette,
+                      sending: sending,
+                      enabled: canSend,
+                      onPressed: canSend && !sending ? onSendRequested : null,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _GradientButton extends StatelessWidget {
+  const _GradientButton({
+    required this.palette,
+    required this.sending,
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  final _ChatPalette palette;
+  final bool sending;
+  final bool enabled;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final canTap = enabled && !sending && onPressed != null;
+    final Color iconColor =
+        canTap ? palette.accentColor : palette.mutedText.withOpacity(0.8);
+
+    return SizedBox(
+      height: 52,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(26),
+          onTap: canTap ? onPressed : null,
+          child: Center(
+            child: sending
+                ? SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(iconColor),
+                    ),
+                  )
+                : Icon(
+                    Icons.send_rounded,
+                    size: 24,
+                    color: iconColor,
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyChatMessage extends StatelessWidget {
+  const _EmptyChatMessage({required this.palette});
+
+  final _ChatPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.chat_bubble_outline,
+            color: palette.mutedText,
+            size: 36,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'まだメッセージがありません',
+            style: TextStyle(
+              color: palette.bodyText,
+              letterSpacing: 2,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '仲間に最初の一言を送信してみよう！',
+            style: TextStyle(color: palette.mutedText, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChatPalette {
+  const _ChatPalette({
+    required this.headerGradient,
+    required this.mineBubbleGradient,
+    required this.buttonGradient,
+    required this.accentColor,
+    required this.bodyText,
+    required this.mutedText,
+    required this.otherBubbleColor,
+    required this.shadowColor,
+  });
+
+  final List<Color> headerGradient;
+  final LinearGradient mineBubbleGradient;
+  final List<Color> buttonGradient;
+  final Color accentColor;
+  final Color bodyText;
+  final Color mutedText;
+  final Color otherBubbleColor;
+  final Color shadowColor;
+
+  static _ChatPalette fromRole(PlayerRole role) {
+    if (role == PlayerRole.oni) {
+      return const _ChatPalette(
+        headerGradient: [
+          Color(0xFFFF47C2),
+          Color(0xFF8A1FBD),
+          Color(0xFFFF47C2),
+        ],
+        mineBubbleGradient: LinearGradient(
+          colors: [
+            Color(0xFFFF47C2),
+            Color(0xFF8A1FBD),
+          ],
+        ),
+        buttonGradient: [
+          Color(0xFFFF47C2),
+          Color(0xFF8A1FBD),
+        ],
+        accentColor: Color(0xFFFF47C2),
+        bodyText: Color(0xFFE6F4F1),
+        mutedText: Color(0xFF6B9DA2),
+        otherBubbleColor: Color(0xFF03161B),
+        shadowColor: Color(0xAA8A1FBD),
+      );
+    }
+
+    return const _ChatPalette(
+      headerGradient: [
+        Color(0xFF22B59B),
+        Color(0xFF5FFBF1),
+        Color(0xFF22B59B),
+      ],
+      mineBubbleGradient: LinearGradient(
+        colors: [
+          Color(0xFF22B59B),
+          Color(0xFF5FFBF1),
+        ],
+      ),
+      buttonGradient: [
+        Color(0xFF22B59B),
+        Color(0xFF5FFBF1),
+      ],
+      accentColor: Color(0xFF22B59B),
+      bodyText: Color(0xFFE6F4F1),
+      mutedText: Color(0xFF6B9DA2),
+      otherBubbleColor: Color(0xFF03161B),
+      shadowColor: Color(0x6622B59B),
+    );
   }
 }
 
@@ -820,7 +1350,13 @@ class GameSettingsSection extends ConsumerWidget {
             );
             return ListView(
               children: [
-                PlayerProfileCard(player: player, gameId: gameId),
+                PlayerProfileCard(
+                  player: player,
+                  gameId: gameId,
+                  onEditProfile: () {
+                    context.push(PlayerProfileEditPage.path(gameId));
+                  },
+                ),
                 const SizedBox(height: 16),
                 PlayerListCard(
                   gameId: gameId,

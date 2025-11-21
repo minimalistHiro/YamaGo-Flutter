@@ -51,6 +51,17 @@ class PlayerRepository {
     return _playersCollection(gameId).doc(uid).delete();
   }
 
+  Future<Player?> fetchPlayer({
+    required String gameId,
+    required String uid,
+  }) async {
+    final doc = await _playersCollection(gameId).doc(uid).get();
+    if (!doc.exists || doc.data() == null) {
+      return null;
+    }
+    return Player.fromFirestore(doc.id, doc.data()!);
+  }
+
   Future<void> updatePlayerRole({
     required String gameId,
     required String uid,
@@ -60,6 +71,7 @@ class PlayerRepository {
       'role': role == PlayerRole.oni ? 'oni' : 'runner',
     });
   }
+
   Future<void> setPlayerActive({
     required String gameId,
     required String uid,
@@ -68,6 +80,21 @@ class PlayerRepository {
     return _playersCollection(gameId).doc(uid).update({
       'active': isActive,
     });
+  }
+
+  Future<void> updatePlayerProfile({
+    required String gameId,
+    required String uid,
+    required String nickname,
+    String? avatarUrl,
+  }) {
+    final data = <String, dynamic>{
+      'nickname': nickname,
+    };
+    if (avatarUrl != null) {
+      data['avatarUrl'] = avatarUrl;
+    }
+    return _playersCollection(gameId).doc(uid).update(data);
   }
 }
 

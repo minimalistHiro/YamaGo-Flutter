@@ -7,10 +7,12 @@ class PlayerProfileCard extends StatelessWidget {
     super.key,
     required this.player,
     required this.gameId,
+    this.onEditProfile,
   });
 
   final Player player;
   final String gameId;
+  final VoidCallback? onEditProfile;
 
   @override
   Widget build(BuildContext context) {
@@ -35,7 +37,15 @@ class PlayerProfileCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 _buildAvatarView(context),
-                const SizedBox(width: 16),
+                if (onEditProfile != null) ...[
+                  const SizedBox(width: 8),
+                  IconButton(
+                    onPressed: onEditProfile,
+                    icon: const Icon(Icons.edit_outlined),
+                    tooltip: 'ユーザー情報を編集',
+                  ),
+                ] else
+                  const SizedBox(width: 16),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -115,7 +125,7 @@ class PlayerProfileCard extends StatelessWidget {
 
   Widget _buildAvatarFallback(ThemeData theme) {
     return Container(
-      color: theme.colorScheme.surfaceVariant.withOpacity(0.4),
+      color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.4),
       child: Icon(
         Icons.person,
         size: 40,
