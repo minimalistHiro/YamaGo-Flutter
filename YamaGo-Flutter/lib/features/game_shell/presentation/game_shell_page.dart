@@ -260,6 +260,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     final bool showCaptureButton = captureTarget != null;
     final double myLocationButtonBottom =
         (showStartButton || showCaptureButton) ? 120.0 : 24.0;
+    final bool hasPrimaryAction = showStartButton || showCaptureButton;
+    final double mapBottomPadding = hasPrimaryAction ? 64.0 : 16.0;
 
     return Stack(
       children: [
@@ -279,7 +281,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
           mapToolbarEnabled: false,
           markers: markers,
           circles: circles,
-          padding: const EdgeInsets.only(bottom: 96),
+          padding: EdgeInsets.only(bottom: mapBottomPadding),
         ),
         if (permissionOverlay != null) permissionOverlay,
         if (countdownOverlay != null) countdownOverlay,
