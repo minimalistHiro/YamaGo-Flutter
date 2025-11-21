@@ -64,6 +64,10 @@ class _GameShellPageState extends ConsumerState<GameShellPage> {
   }
 
   void _handleTabSelected(int index) {
+    final isLeavingChatTab = _currentIndex == 1 && index != 1;
+    if (isLeavingChatTab) {
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
     setState(() {
       _currentIndex = index;
     });
@@ -156,11 +160,12 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   final Set<String> _knownClearedPinIds = <String>{};
   PlayerRole? _latestPlayerRole;
   GameStatus? _latestGameStatus;
+  ProviderSubscription<AsyncValue<List<PinPoint>>>? _pinsSubscription;
 
   @override
   void initState() {
     super.initState();
-    ref.listen<AsyncValue<List<PinPoint>>>(
+    _pinsSubscription = ref.listenManual<AsyncValue<List<PinPoint>>>(
       pinsStreamProvider(widget.gameId),
       (previous, next) {
         next.whenData((pins) {
@@ -177,6 +182,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     _statusTicker?.cancel();
     _mapController?.dispose();
     _generatorAlertTimer?.cancel();
+    _pinsSubscription?.close();
     super.dispose();
   }
 
@@ -244,7 +250,13 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     );
     final nearbyPin = nearbyPinInfo?.pin;
     final nearbyPinDistance = nearbyPinInfo?.distanceMeters;
-    final playerMarkers = _buildPlayerMarkers(playersState, currentUid);
+    final playerMarkers = _buildPlayerMarkers(
+      playersState: playersState,
+      currentUid: currentUid,
+      currentPlayer: currentPlayer,
+      selfPosition: selfLatLng,
+      game: game,
+    );
     final bool shouldShowPins = game?.status == GameStatus.running;
     final pinMarkers = shouldShowPins
         ? _buildPinMarkers(
@@ -872,17 +884,28 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     );
   }
 
-  Set<Marker> _buildPlayerMarkers(
-    AsyncValue<List<Player>> playersState,
-    String? currentUid,
-  ) {
+  Set<Marker> _buildPlayerMarkers({
+    required AsyncValue<List<Player>> playersState,
+    required String? currentUid,
+    required Player? currentPlayer,
+    required LatLng? selfPosition,
+    required Game? game,
+  }) {
     final markers = <Marker>{};
-
+    final viewerPosition = selfPosition ?? currentPlayer?.position;
     playersState.whenData((players) {
       for (final player in players) {
         if (player.uid == currentUid) continue;
         final position = player.position;
         if (position == null) continue;
+        if (!_isPlayerVisibleToViewer(
+          viewer: currentPlayer,
+          target: player,
+          viewerPosition: viewerPosition,
+          game: game,
+        )) {
+          continue;
+        }
         markers.add(
           Marker(
             markerId: MarkerId('player-${player.uid}'),
@@ -895,6 +918,40 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     });
 
     return markers;
+  }
+
+  bool _isPlayerVisibleToViewer({
+    required Player? viewer,
+    required Player target,
+    required LatLng? viewerPosition,
+    required Game? game,
+  }) {
+    if (viewer == null) return true;
+    final viewerRole = viewer.role;
+    final targetRole = target.role;
+    final position = target.position;
+    if (position == null) return false;
+    final radius = switch ((viewerRole, targetRole)) {
+      (PlayerRole.runner, PlayerRole.oni) =>
+        game?.runnerSeeKillerRadiusM?.toDouble(),
+      (PlayerRole.oni, PlayerRole.runner) =>
+        game?.killerDetectRunnerRadiusM?.toDouble(),
+      _ => null,
+    };
+    if (radius == null || radius <= 0) {
+      return true;
+    }
+    final viewerLatLng = viewerPosition;
+    if (viewerLatLng == null) {
+      return true;
+    }
+    final distance = Geolocator.distanceBetween(
+      viewerLatLng.latitude,
+      viewerLatLng.longitude,
+      position.latitude,
+      position.longitude,
+    );
+    return distance <= radius;
   }
 
   Set<Marker> _buildPinMarkers({
@@ -2010,6 +2067,7 @@ class GameSettingsSection extends ConsumerWidget {
                   player: player,
                   gameId: gameId,
                   onEditProfile: () {
+                    FocusScope.of(context).unfocus();
                     context.push(PlayerProfileEditPage.path(gameId));
                   },
                 ),
@@ -2029,6 +2087,7 @@ class GameSettingsSection extends ConsumerWidget {
                       subtitle: const Text('発電所数や視認距離、カウントダウンなどを調整'),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () {
+                        FocusScope.of(context).unfocus();
                         context.pushNamed(
                           GameSettingsPage.routeName,
                           pathParameters: {'gameId': gameId},
@@ -2044,6 +2103,7 @@ class GameSettingsSection extends ConsumerWidget {
                       subtitle: const Text('鬼/逃走者の人数と役割を整理・ランダム振り分け'),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () {
+                        FocusScope.of(context).unfocus();
                         context.pushNamed(
                           RoleAssignmentPage.routeName,
                           pathParameters: {'gameId': gameId},
@@ -2060,6 +2120,7 @@ class GameSettingsSection extends ConsumerWidget {
                       subtitle: const Text('ドラッグ&ドロップで集合地点を微調整できます'),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () {
+                        FocusScope.of(context).unfocus();
                         context.push(PinEditorPage.path(gameId));
                       },
                     ),

@@ -153,9 +153,9 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
                     _buildVisibilityCard(
                       title: '逃走者が鬼を検知する距離',
                       value: _runnerSeeKiller,
-                      min: 50,
-                      max: 1000,
-                      divisions: 95,
+                      min: 100,
+                      max: 5000,
+                      divisions: 49,
                       onChanged: (next) =>
                           setState(() => _runnerSeeKiller = next),
                       description: '逃走者が鬼の位置を警告として受け取る距離です。',
@@ -164,9 +164,9 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
                     _buildVisibilityCard(
                       title: '鬼が逃走者を検知する距離',
                       value: _killerDetectRunner,
-                      min: 50,
-                      max: 1000,
-                      divisions: 95,
+                      min: 100,
+                      max: 5000,
+                      divisions: 49,
                       onChanged: (next) =>
                           setState(() => _killerDetectRunner = next),
                       description: '鬼のマップに逃走者が表示される最大距離です。',
@@ -210,7 +210,7 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
             .toDouble();
         _runnerSeeKiller =
             (game.runnerSeeKillerRadiusM ?? _defaultRunnerSeeKiller)
-                .clamp(50, 1000)
+                .clamp(100, 5000)
                 .toDouble();
         _runnerSeeRunner =
             (game.runnerSeeRunnerRadiusM ?? _defaultRunnerSeeRunner)
@@ -222,7 +222,7 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
                 .toDouble();
         _killerDetectRunner =
             (game.killerDetectRunnerRadiusM ?? _defaultKillerDetectRunner)
-                .clamp(50, 1000)
+                .clamp(100, 5000)
                 .toDouble();
         _killerSeeGenerator =
             (game.killerSeeGeneratorRadiusM ?? _defaultKillerSeeGenerator)
