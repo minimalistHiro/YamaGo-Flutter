@@ -268,6 +268,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
             target: _cameraTarget,
             zoom: 12.5,
           ),
+          cameraTargetBounds: CameraTargetBounds(yamanoteBounds),
           onMapCreated: (controller) {
             _mapController ??= controller;
           },
@@ -1394,8 +1395,7 @@ class _ChatComposer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hint =
-        role == PlayerRole.oni ? '鬼チャットにメッセージを入力...' : '逃走者チャットにメッセージを入力...';
+    const hint = 'チャットを入力…';
     return SafeArea(
       top: false,
       child: Padding(

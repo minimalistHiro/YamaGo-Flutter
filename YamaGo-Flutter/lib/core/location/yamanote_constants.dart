@@ -1,8 +1,8 @@
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
-const LatLng yamanoteCenter = LatLng(35.681236, 139.767125);
+const LatLng yamanoteCenter = LatLng(35.75, 139.725);
 
 final LatLngBounds yamanoteBounds = LatLngBounds(
-  southwest: LatLng(35.600448, 139.700386),
-  northeast: LatLng(35.770315, 139.840012),
+  southwest: LatLng(35.65, 139.65),
+  northeast: LatLng(35.85, 139.8),
 );
