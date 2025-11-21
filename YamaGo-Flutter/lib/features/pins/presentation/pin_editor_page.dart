@@ -83,6 +83,7 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
                     target: _cameraTarget,
                     zoom: 12.5,
                   ),
+                  cameraTargetBounds: CameraTargetBounds(yamanoteBounds),
                   markers: _buildMarkers(displayPins),
                   onMapCreated: (controller) {
                     _mapController ??= controller;
@@ -154,14 +155,7 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
   }
 
   Set<Marker> _buildMarkers(List<PinPoint> pins) {
-    final markers = <Marker>{
-      Marker(
-        markerId: const MarkerId('center'),
-        position: yamanoteCenter,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-        infoWindow: const InfoWindow(title: '山手線中心'),
-      ),
-    };
+    final markers = <Marker>{};
 
     for (final pin in pins) {
       final position = LatLng(pin.lat, pin.lng);

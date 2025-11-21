@@ -7,6 +7,7 @@ import 'package:yamago_flutter/features/game/application/player_providers.dart';
 import 'package:yamago_flutter/features/game/data/game_repository.dart';
 import 'package:yamago_flutter/features/game/domain/game.dart';
 import 'package:yamago_flutter/features/game/domain/player.dart';
+import 'package:yamago_flutter/features/pins/data/pin_repository.dart';
 import 'package:yamago_flutter/features/pins/presentation/pin_editor_page.dart';
 
 class GameSettingsPage extends ConsumerStatefulWidget {
@@ -47,6 +48,7 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
   double _gameDurationMinutes = _defaultGameDurationMinutes.toDouble();
   int _countdownMinutes = _defaultCountdownSeconds ~/ 60;
   int _countdownSeconds = _defaultCountdownSeconds % 60;
+  int? _initialPinCount;
 
   bool _isSaving = false;
   String? _errorMessage;
@@ -230,6 +232,7 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
         _countdownMinutes = countdownSeconds ~/ 60;
         _countdownSeconds = countdownSeconds % 60;
         _formInitialized = true;
+        _initialPinCount ??= _pinCount.toInt();
       });
     });
   }
@@ -274,22 +277,6 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
             const Text(
               'ゲーム開始時にマップへ配置される発電所（黄色ピン）の数です。'
               '必要に応じて 1〜20 個の範囲で設定してください。',
-              style: TextStyle(fontSize: 12),
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: _isSaving
-                  ? null
-                  : () {
-                      context.push(PinEditorPage.path(widget.gameId));
-                    },
-              icon: const Icon(Icons.edit_location_alt_outlined),
-              label: const Text('発電所の場所を編集'),
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              '既存のピンをドラッグして調整できます。ピン数を変更した場合は'
-              '「設定を保存」を押してから編集画面に移動してください。',
               style: TextStyle(fontSize: 12),
             ),
           ],
@@ -540,6 +527,11 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
     });
     try {
       final repo = ref.read(gameRepositoryProvider);
+      final pinRepo = ref.read(pinRepositoryProvider);
+      final previousPinCount = _initialPinCount;
+      final newPinCount = _pinCount.toInt();
+      final pinCountChanged =
+          previousPinCount != null && previousPinCount != newPinCount;
       final settings = GameSettingsInput(
         captureRadiusM: _captureRadius.toInt(),
         runnerSeeKillerRadiusM: _runnerSeeKiller.toInt(),
@@ -547,11 +539,18 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
         runnerSeeGeneratorRadiusM: _runnerSeeGenerator.toInt(),
         killerDetectRunnerRadiusM: _killerDetectRunner.toInt(),
         killerSeeGeneratorRadiusM: _killerSeeGenerator.toInt(),
-        pinCount: _pinCount.toInt(),
+        pinCount: newPinCount,
         countdownDurationSec: _countdownMinutes * 60 + _countdownSeconds,
         gameDurationSec: _gameDurationMinutes.toInt() * 60,
       );
       await repo.updateGameSettings(gameId: widget.gameId, settings: settings);
+      if (pinCountChanged) {
+        await pinRepo.reseedPinsWithRandomLocations(
+          gameId: widget.gameId,
+          targetCount: newPinCount,
+        );
+      }
+      _initialPinCount = newPinCount;
       if (!mounted) return;
       Navigator.of(context).pop(true);
     } catch (error) {

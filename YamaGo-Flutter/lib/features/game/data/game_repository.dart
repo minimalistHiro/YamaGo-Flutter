@@ -46,6 +46,14 @@ class GameRepository {
     });
   }
 
+  Future<Game?> fetchGame(String gameId) async {
+    final doc = await _gameCollection.doc(gameId).get();
+    if (!doc.exists) {
+      return null;
+    }
+    return Game.fromFirestore(doc);
+  }
+
   Future<void> addPlayer({
     required String gameId,
     required String uid,

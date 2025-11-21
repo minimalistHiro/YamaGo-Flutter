@@ -33,6 +33,8 @@ import 'package:yamago_flutter/features/game/presentation/widgets/player_hud.dar
 import 'package:yamago_flutter/features/game/presentation/widgets/player_list_card.dart';
 import 'package:yamago_flutter/features/game/presentation/widgets/player_profile_card.dart';
 import 'package:yamago_flutter/features/onboarding/presentation/onboarding_pages.dart';
+import 'package:yamago_flutter/features/pins/application/pin_providers.dart';
+import 'package:yamago_flutter/features/pins/domain/pin_point.dart';
 import 'package:yamago_flutter/features/pins/presentation/pin_editor_page.dart';
 
 class GameShellPage extends ConsumerStatefulWidget {
@@ -164,6 +166,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     final permissionState = ref.watch(locationPermissionStatusProvider);
     final locationState = ref.watch(locationStreamProvider);
     final playersState = ref.watch(playersStreamProvider(widget.gameId));
+    final pinsState = ref.watch(pinsStreamProvider(widget.gameId));
     final gameState = ref.watch(gameStreamProvider(widget.gameId));
     final auth = ref.watch(firebaseAuthProvider);
     ref.watch(playerLocationUpdaterProvider(widget.gameId));
@@ -189,7 +192,6 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       });
     });
 
-    final markers = _buildMarkers(playersState, currentUid);
     final game = gameState.valueOrNull;
     final captureRadius = game?.captureRadiusM?.toDouble();
     var currentPlayer = currentPlayerState?.valueOrNull;
@@ -211,6 +213,14 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     );
     final captureTarget = captureTargetInfo?.runner;
     final captureTargetDistance = captureTargetInfo?.distanceMeters;
+    final playerMarkers = _buildPlayerMarkers(playersState, currentUid);
+    final pinMarkers = _buildPinMarkers(
+      pinsState: pinsState,
+      game: game,
+      currentRole: currentPlayer?.role,
+      selfPosition: selfLatLng,
+    );
+    final markers = <Marker>{...playerMarkers, ...pinMarkers};
 
     final permissionOverlay = _buildPermissionOverlay(
       context,
@@ -390,14 +400,25 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     }
     if (remainingSeconds <= 0 && !_countdownAutoStartTriggered) {
       _countdownAutoStartTriggered = true;
-      unawaited(_startGameAfterCountdown(context));
+      unawaited(
+        _startGameAfterCountdown(
+          context,
+          pinCount: game.pinCount,
+        ),
+      );
     }
   }
 
-  Future<void> _startGameAfterCountdown(BuildContext context) async {
+  Future<void> _startGameAfterCountdown(
+    BuildContext context, {
+    int? pinCount,
+  }) async {
     try {
       final controller = ref.read(gameControlControllerProvider);
-      await controller.startGame(gameId: widget.gameId);
+      await controller.startGame(
+        gameId: widget.gameId,
+        pinCount: pinCount,
+      );
     } catch (error) {
       _countdownAutoStartTriggered = false;
       if (context.mounted) {
@@ -635,7 +656,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     );
   }
 
-  Set<Marker> _buildMarkers(
+  Set<Marker> _buildPlayerMarkers(
     AsyncValue<List<Player>> playersState,
     String? currentUid,
   ) {
@@ -658,6 +679,88 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     });
 
     return markers;
+  }
+
+  Set<Marker> _buildPinMarkers({
+    required AsyncValue<List<PinPoint>> pinsState,
+    required Game? game,
+    required PlayerRole? currentRole,
+    required LatLng? selfPosition,
+  }) {
+    if (game?.status != GameStatus.running) {
+      return const <Marker>{};
+    }
+    final pins = pinsState.valueOrNull;
+    if (pins == null || pins.isEmpty) {
+      return const <Marker>{};
+    }
+    final markers = <Marker>{};
+    final runnerRadius = game?.runnerSeeGeneratorRadiusM?.toDouble();
+    final killerRadius = game?.killerSeeGeneratorRadiusM?.toDouble();
+    for (final pin in pins) {
+      final position = LatLng(pin.lat, pin.lng);
+      final isVisible = _shouldDisplayPin(
+        pin: pin,
+        role: currentRole,
+        selfPosition: selfPosition,
+        runnerRadius: runnerRadius,
+        killerRadius: killerRadius,
+      );
+      if (!isVisible) continue;
+      final hue = switch (pin.status) {
+        PinStatus.pending => BitmapDescriptor.hueYellow,
+        PinStatus.clearing => BitmapDescriptor.hueOrange,
+        PinStatus.cleared => BitmapDescriptor.hueGreen,
+      };
+      markers.add(
+        Marker(
+          markerId: MarkerId('pin-${pin.id}'),
+          position: position,
+          icon: BitmapDescriptor.defaultMarkerWithHue(hue),
+          infoWindow: InfoWindow(
+            title: '発電所',
+            snippet: _pinStatusLabel(pin.status),
+          ),
+        ),
+      );
+    }
+    return markers;
+  }
+
+  bool _shouldDisplayPin({
+    required PinPoint pin,
+    required PlayerRole? role,
+    required LatLng? selfPosition,
+    required double? runnerRadius,
+    required double? killerRadius,
+  }) {
+    final status = pin.status;
+    if (status == PinStatus.clearing || status == PinStatus.cleared) {
+      return true;
+    }
+    if (selfPosition == null || role == null) {
+      return true;
+    }
+    final viewerRadius =
+        role == PlayerRole.runner ? runnerRadius : killerRadius;
+    if (viewerRadius == null || viewerRadius <= 0) {
+      return true;
+    }
+    final distance = Geolocator.distanceBetween(
+      selfPosition.latitude,
+      selfPosition.longitude,
+      pin.lat,
+      pin.lng,
+    );
+    return distance <= viewerRadius;
+  }
+
+  String _pinStatusLabel(PinStatus status) {
+    return switch (status) {
+      PinStatus.pending => '稼働中',
+      PinStatus.clearing => '解除中',
+      PinStatus.cleared => '解除済み',
+    };
   }
 
   Set<Circle> _buildCaptureCircles(
@@ -1720,6 +1823,7 @@ class GameSettingsSection extends ConsumerWidget {
                       },
                     ),
                   ),
+                ],
                   const SizedBox(height: 16),
                   Card(
                     child: ListTile(
@@ -1732,8 +1836,7 @@ class GameSettingsSection extends ConsumerWidget {
                       },
                     ),
                   ),
-                ],
-                const SizedBox(height: 16),
+                  const SizedBox(height: 16),
                 _ActionButtons(
                   gameId: gameId,
                   ownerUid: gameState.value?.ownerUid ?? '',
