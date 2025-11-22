@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ui' as ui;
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
@@ -95,7 +96,7 @@ class _GameShellPageState extends ConsumerState<GameShellPage> {
     final titles = ['マップ', 'チャット', '設定'];
 
     AppBar? appBar;
-    if (_currentIndex != 1) {
+    if (_currentIndex == 2) {
       appBar = AppBar(
         title: Text(titles[_currentIndex]),
       );
@@ -180,6 +181,10 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   ProviderSubscription<AsyncValue<Position>>? _locationSubscription;
   bool _hasCenteredOnUserInitially = false;
   bool _backgroundPermissionDialogDismissed = false;
+  static const _kodouSoundAssetPath = 'sounds/kodou_sound.mp3';
+  AudioPlayer? _kodouPlayer;
+  bool _shouldPlayKodouSound = false;
+  bool _isKodouPlaying = false;
 
   @override
   void initState() {
@@ -211,6 +216,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         _maybeCancelClearingWhenOutOfRange();
       });
     });
+    unawaited(_initializeKodouPlayer());
     unawaited(_loadCustomMarkers());
   }
 
@@ -223,6 +229,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     _pinsSubscription?.close();
     _gameEventsSubscription?.close();
     _locationSubscription?.close();
+    final kodouPlayer = _kodouPlayer;
+    if (kodouPlayer != null) {
+      unawaited(kodouPlayer.stop());
+      kodouPlayer.dispose();
+    }
     super.dispose();
   }
 
@@ -257,6 +268,13 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         (latestPosition != null
             ? LatLng(latestPosition.latitude, latestPosition.longitude)
             : currentPlayer?.position);
+    final isRunnerDetectedByOni = _isRunnerDetectedByOni(
+      game: game,
+      currentPlayer: currentPlayer,
+      selfPosition: selfLatLng,
+      players: players,
+    );
+    _updateKodouSound(shouldPlay: isRunnerDetectedByOni);
     final captureTargetInfo = _findCaptureTarget(
       gameStatus: game?.status,
       currentPlayer: currentPlayer,
@@ -457,24 +475,30 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         if (permissionOverlay != null) permissionOverlay,
         if (countdownOverlay != null) countdownOverlay,
         Positioned(
-          top: 16,
-          left: 16,
-          right: 16,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: GameStatusBanner(
-                  gameState: gameState,
-                  gameId: widget.gameId,
-                ),
+          top: 0,
+          left: 0,
+          right: 0,
+          child: SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: GameStatusBanner(
+                      gameState: gameState,
+                      gameId: widget.gameId,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 220),
+                    child: PlayerHud(playersState: playersState),
+                  ),
+                ],
               ),
-              const SizedBox(width: 8),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 220),
-                child: PlayerHud(playersState: playersState),
-              ),
-            ],
+            ),
           ),
         ),
         if (_showGeneratorClearedAlert && currentPlayer?.role == PlayerRole.oni)
@@ -602,6 +626,64 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       _statusTicker = null;
       _isStatusTickerActive = false;
     }
+  }
+
+  Future<void> _initializeKodouPlayer() async {
+    final player = AudioPlayer();
+    await player.setReleaseMode(ReleaseMode.loop);
+    if (!mounted) {
+      await player.dispose();
+      return;
+    }
+    _kodouPlayer = player;
+    if (_shouldPlayKodouSound) {
+      _ensureKodouPlaying();
+    }
+  }
+
+  void _updateKodouSound({required bool shouldPlay}) {
+    if (_shouldPlayKodouSound == shouldPlay && _kodouPlayer != null) {
+      if (shouldPlay == _isKodouPlaying) {
+        return;
+      }
+    }
+    _shouldPlayKodouSound = shouldPlay;
+    if (shouldPlay) {
+      _ensureKodouPlaying();
+    } else {
+      _ensureKodouStopped();
+    }
+  }
+
+  void _ensureKodouPlaying() {
+    if (!_shouldPlayKodouSound) return;
+    final player = _kodouPlayer;
+    if (player == null || _isKodouPlaying) {
+      return;
+    }
+    _isKodouPlaying = true;
+    unawaited(
+      player.play(AssetSource(_kodouSoundAssetPath)).catchError((error, _) {
+        debugPrint('Failed to play kodou sound: $error');
+        _isKodouPlaying = false;
+      }),
+    );
+  }
+
+  void _ensureKodouStopped() {
+    if (!_isKodouPlaying) {
+      return;
+    }
+    _isKodouPlaying = false;
+    final player = _kodouPlayer;
+    if (player == null) {
+      return;
+    }
+    unawaited(
+      player.stop().catchError((error, _) {
+        debugPrint('Failed to stop kodou sound: $error');
+      }),
+    );
   }
 
   void _maybeCenterCameraOnUserInitially() {
@@ -1477,6 +1559,48 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       pin.lat,
       pin.lng,
     );
+  }
+
+  bool _isRunnerDetectedByOni({
+    required Game? game,
+    required Player? currentPlayer,
+    required LatLng? selfPosition,
+    required List<Player>? players,
+  }) {
+    if (game?.status != GameStatus.running) return false;
+    if (currentPlayer == null || currentPlayer.role != PlayerRole.runner) {
+      return false;
+    }
+    if (!currentPlayer.isActive ||
+        currentPlayer.status != PlayerStatus.active ||
+        selfPosition == null) {
+      return false;
+    }
+    final detectionRadius = game?.killerDetectRunnerRadiusM?.toDouble();
+    if (detectionRadius == null || detectionRadius <= 0) {
+      return false;
+    }
+    if (players == null || players.isEmpty) {
+      return false;
+    }
+    for (final player in players) {
+      if (player.role != PlayerRole.oni) continue;
+      if (!player.isActive || player.status != PlayerStatus.active) {
+        continue;
+      }
+      final position = player.position;
+      if (position == null) continue;
+      final distance = Geolocator.distanceBetween(
+        selfPosition.latitude,
+        selfPosition.longitude,
+        position.latitude,
+        position.longitude,
+      );
+      if (distance <= detectionRadius) {
+        return true;
+      }
+    }
+    return false;
   }
 
   Set<Marker> _buildPlayerMarkers({

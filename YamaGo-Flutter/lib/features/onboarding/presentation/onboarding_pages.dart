@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -1419,7 +1420,12 @@ class _LandingButton extends StatelessWidget {
           color: Colors.transparent,
           child: InkWell(
             borderRadius: BorderRadius.circular(32),
-            onTap: onPressed,
+            onTap: isEnabled
+                ? () {
+                    _LandingButtonSound.play();
+                    onPressed?.call();
+                  }
+                : null,
             splashColor: isEnabled ? null : Colors.transparent,
             child: Center(
               child: Text(
@@ -1436,6 +1442,31 @@ class _LandingButton extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _LandingButtonSound {
+  static const _assetPath = 'sounds/button_sound.mp3';
+  static AudioPlayer? _player;
+  static bool _isInitialized = false;
+
+  static void play() {
+    final player = _player ?? AudioPlayer(playerId: 'landing_button');
+    _player = player;
+    unawaited(_playInternal(player));
+  }
+
+  static Future<void> _playInternal(AudioPlayer player) async {
+    try {
+      if (!_isInitialized) {
+        await player.setReleaseMode(ReleaseMode.release);
+        _isInitialized = true;
+      }
+      await player.stop();
+      await player.play(AssetSource(_assetPath));
+    } catch (error) {
+      debugPrint('Failed to play landing button sound: $error');
+    }
   }
 }
 
