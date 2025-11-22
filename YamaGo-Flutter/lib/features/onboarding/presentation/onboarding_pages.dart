@@ -353,10 +353,10 @@ class _JoinPageState extends ConsumerState<JoinPage> {
                     ),
                     const SizedBox(height: 32),
                     const _FooterNotices(
+                      alignCenter: false,
                       lines: [
                         '位置情報の使用に同意してください',
                         '山手線内でのみプレイ可能です',
-                        'ゲーム開始30分後に鬼が有効化されます',
                       ],
                     ),
                   ],
@@ -458,6 +458,8 @@ class _CreateGamePageState extends ConsumerState<CreateGamePage> {
   bool _copied = false;
   Timer? _copyTimer;
   bool _isCreating = false;
+  Uint8List? _avatarBytes;
+  final ImagePicker _picker = ImagePicker();
 
   @override
   void dispose() {
@@ -630,6 +632,7 @@ class _CreateGamePageState extends ConsumerState<CreateGamePage> {
                     ),
                     const SizedBox(height: 24),
                     const _FooterNotices(
+                      alignCenter: false,
                       lines: [
                         '位置情報の使用に同意してください',
                         '山手線内でのみプレイ可能です',
@@ -703,6 +706,21 @@ class _CreateGamePageState extends ConsumerState<CreateGamePage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            const _InputLabel('プロフィール画像（任意）'),
+                            const SizedBox(height: 10),
+                            _AvatarPicker(
+                              imageBytes: _avatarBytes,
+                              onPickGallery: () =>
+                                  _pickAvatar(ImageSource.gallery),
+                              onPickCamera: () =>
+                                  _pickAvatar(ImageSource.camera),
+                              onRemove: () {
+                                setState(() {
+                                  _avatarBytes = null;
+                                });
+                              },
+                            ),
+                            const SizedBox(height: 28),
                             const _InputLabel('ニックネーム'),
                             TextFormField(
                               controller: _nicknameController,
@@ -730,11 +748,11 @@ class _CreateGamePageState extends ConsumerState<CreateGamePage> {
                       ),
                       const SizedBox(height: 32),
                       const _FooterNotices(
+                        alignCenter: false,
                         lines: [
                           'ゲーム作成者は鬼になります',
                           '位置情報の使用に同意してください',
                           '山手線内でのみプレイ可能です',
-                          'ゲーム開始30分後に鬼が有効化されます',
                         ],
                       ),
                     ],
@@ -765,6 +783,7 @@ class _CreateGamePageState extends ConsumerState<CreateGamePage> {
       final gameId = await controller.createGame(
         nickname: nickname,
         ownerUid: user.uid,
+        avatarBytes: _avatarBytes,
       );
       if (!mounted) return;
       setState(() {
@@ -788,6 +807,27 @@ class _CreateGamePageState extends ConsumerState<CreateGamePage> {
           _isCreating = false;
         });
       }
+    }
+  }
+
+  Future<void> _pickAvatar(ImageSource source) async {
+    try {
+      final file = await _picker.pickImage(
+        source: source,
+        maxWidth: 720,
+        maxHeight: 720,
+        imageQuality: 85,
+      );
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      setState(() {
+        _avatarBytes = bytes;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('画像の読み込みに失敗しました: $error')),
+      );
     }
   }
 
@@ -1301,72 +1341,77 @@ class _AvatarPicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Container(
-              width: 96,
-              height: 96,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: _OnboardingColors.surfaceAccent,
-                border: Border.all(
-                  color: _OnboardingColors.neonGreen.withOpacity(0.4),
-                ),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x3322B59B),
-                    blurRadius: 20,
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _showImageSourceSheet(context),
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    width: 96,
+                    height: 96,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _OnboardingColors.surfaceAccent,
+                      border: Border.all(
+                        color: _OnboardingColors.neonGreen.withOpacity(0.4),
+                      ),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x3322B59B),
+                          blurRadius: 20,
+                        ),
+                      ],
+                    ),
+                    child: ClipOval(
+                      child: imageBytes != null
+                          ? Image.memory(
+                              imageBytes!,
+                              fit: BoxFit.cover,
+                            )
+                          : Icon(
+                              Icons.person,
+                              size: 40,
+                              color:
+                                  _OnboardingColors.mutedText.withOpacity(0.6),
+                            ),
+                    ),
+                  ),
+                  Positioned(
+                    bottom: 4,
+                    right: 4,
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.7),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: _OnboardingColors.neonGlow.withOpacity(0.6),
+                        ),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x5522B59B),
+                            blurRadius: 12,
+                          ),
+                        ],
+                      ),
+                      child: const Icon(
+                        Icons.camera_alt_outlined,
+                        size: 16,
+                        color: Colors.white,
+                      ),
+                    ),
                   ),
                 ],
               ),
-              child: ClipOval(
-                child: imageBytes != null
-                    ? Image.memory(
-                        imageBytes!,
-                        fit: BoxFit.cover,
-                      )
-                    : Icon(
-                        Icons.person,
-                        size: 40,
-                        color: _OnboardingColors.mutedText.withOpacity(0.6),
-                      ),
-              ),
             ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: [
-            OutlinedButton.icon(
-              onPressed: onPickGallery,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _OnboardingColors.mutedText,
-                side: BorderSide(
-                  color: _OnboardingColors.neonGreen.withOpacity(0.4),
-                ),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              ),
-              icon: const Icon(Icons.photo_library_outlined, size: 18),
-              label: const Text('ライブラリから選択'),
-            ),
-            OutlinedButton.icon(
-              onPressed: onPickCamera,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _OnboardingColors.mutedText,
-                side: BorderSide(
-                  color: _OnboardingColors.neonGreen.withOpacity(0.4),
-                ),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              ),
-              icon: const Icon(Icons.photo_camera_outlined, size: 18),
-              label: const Text('カメラで撮影'),
-            ),
-            if (imageBytes != null)
+            if (imageBytes != null) ...[
+              const SizedBox(width: 16),
               OutlinedButton.icon(
                 onPressed: onRemove,
                 style: OutlinedButton.styleFrom(
@@ -1380,9 +1425,110 @@ class _AvatarPicker extends StatelessWidget {
                 icon: const Icon(Icons.delete_outline, size: 18),
                 label: const Text('リセット'),
               ),
+            ],
           ],
         ),
+        const SizedBox(height: 12),
+        Text(
+          'タップして画像を設定',
+          style: TextStyle(
+            color: _OnboardingColors.mutedText.withOpacity(0.8),
+            letterSpacing: 2,
+            fontSize: 12,
+          ),
+        ),
       ],
+    );
+  }
+
+  void _showImageSourceSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF04161E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 42,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _ImageSourceTile(
+                  icon: Icons.photo_library_outlined,
+                  label: 'ライブラリから選択',
+                  onTap: () {
+                    Navigator.of(sheetContext).pop();
+                    onPickGallery();
+                  },
+                ),
+                const SizedBox(height: 12),
+                _ImageSourceTile(
+                  icon: Icons.photo_camera_outlined,
+                  label: 'カメラで撮影',
+                  onTap: () {
+                    Navigator.of(sheetContext).pop();
+                    onPickCamera();
+                  },
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ImageSourceTile extends StatelessWidget {
+  const _ImageSourceTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      onTap: onTap,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(
+          color: _OnboardingColors.neonGreen.withOpacity(0.15),
+        ),
+      ),
+      tileColor: const Color(0x3305161C),
+      leading: Icon(
+        icon,
+        color: _OnboardingColors.neonGlow,
+      ),
+      title: Text(
+        label,
+        style: const TextStyle(
+          color: _OnboardingColors.titleText,
+          letterSpacing: 2,
+        ),
+      ),
+      trailing: const Icon(
+        Icons.chevron_right,
+        color: _OnboardingColors.mutedText,
+      ),
     );
   }
 }

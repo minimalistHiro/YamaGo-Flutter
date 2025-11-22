@@ -22,16 +22,25 @@ class OnboardingController extends StateNotifier<OnboardingState> {
   Future<String> createGame({
     required String nickname,
     required String ownerUid,
+    Uint8List? avatarBytes,
   }) async {
     state = const AsyncLoading();
     try {
       final gameId = await _gameRepository.createGame(ownerUid: ownerUid);
+      String? avatarUrl;
+      if (avatarBytes != null && avatarBytes.isNotEmpty) {
+        final avatarStorage = await _avatarStorageFuture;
+        avatarUrl = await avatarStorage.uploadAvatar(
+          uid: ownerUid,
+          bytes: avatarBytes,
+        );
+      }
       await _gameRepository.addPlayer(
         gameId: gameId,
         uid: ownerUid,
         nickname: nickname,
         role: 'oni',
-        avatarUrl: null,
+        avatarUrl: avatarUrl,
       );
       await _persistProfile(nickname: nickname, lastGameId: gameId);
       state = const AsyncData(null);
