@@ -1721,9 +1721,18 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
   bool _sending = false;
+  bool _hasAutoScrolledToBottom = false;
+  bool _isUserNearBottom = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_handleScrollPositionChanged);
+  }
 
   @override
   void dispose() {
+    _scrollController.removeListener(_handleScrollPositionChanged);
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -1794,7 +1803,17 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
                           duration: const Duration(milliseconds: 200),
                           child: chatState.when(
                             data: (messages) {
-                              _scheduleScrollToBottom();
+                              final shouldForceInitialScroll =
+                                  messages.isNotEmpty &&
+                                      !_hasAutoScrolledToBottom;
+                              if (shouldForceInitialScroll) {
+                                _hasAutoScrolledToBottom = true;
+                              }
+                              if (messages.isNotEmpty) {
+                                _scheduleScrollToBottom(
+                                  force: shouldForceInitialScroll,
+                                );
+                              }
                               if (messages.isEmpty) {
                                 return _EmptyChatMessage(palette: palette);
                               }
@@ -1845,9 +1864,19 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
     );
   }
 
-  void _scheduleScrollToBottom() {
+  void _handleScrollPositionChanged() {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    const threshold = 120.0;
+    final distanceToBottom = position.maxScrollExtent - position.pixels;
+    _isUserNearBottom = distanceToBottom <= threshold;
+  }
+
+  void _scheduleScrollToBottom({bool force = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
+      final shouldScroll = force || _isUserNearBottom;
+      if (!shouldScroll) return;
       final position = _scrollController.position;
       _scrollController.animateTo(
         position.maxScrollExtent,
