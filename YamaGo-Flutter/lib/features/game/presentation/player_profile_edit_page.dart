@@ -314,6 +314,7 @@ class _PlayerProfileEditPageState extends ConsumerState<PlayerProfileEditPage> {
       await profileStore.saveNickname(nickname);
 
       if (!mounted) return;
+      FocusScope.of(context).unfocus();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('プロフィールを更新しました')),
       );

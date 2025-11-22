@@ -172,6 +172,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   ProviderSubscription<AsyncValue<List<PinPoint>>>? _pinsSubscription;
   ProviderSubscription<AsyncValue<Position>>? _locationSubscription;
   bool _hasCenteredOnUserInitially = false;
+  bool _backgroundPermissionDialogDismissed = false;
 
   @override
   void initState() {
@@ -335,7 +336,9 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       orElse: () => 900,
     );
     final isLocationPermissionGranted = permissionState.maybeWhen(
-      data: (status) => status == LocationPermissionStatus.granted,
+      data: (status) =>
+          status == LocationPermissionStatus.granted ||
+          status == LocationPermissionStatus.limited,
       orElse: () => false,
     );
     final bool isMyLocationButtonEnabled =
@@ -608,7 +611,10 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     });
     try {
       final status = await ref.read(locationPermissionStatusProvider.future);
-      if (status != LocationPermissionStatus.granted) {
+      final hasForegroundPermission =
+          status == LocationPermissionStatus.granted ||
+              status == LocationPermissionStatus.limited;
+      if (!hasForegroundPermission) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -1481,6 +1487,16 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   ) {
     return permissionState.when(
       data: (status) {
+        if (status != LocationPermissionStatus.limited &&
+            _backgroundPermissionDialogDismissed) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            setState(() {
+              _backgroundPermissionDialogDismissed = false;
+            });
+          });
+        }
+
         if (status == LocationPermissionStatus.granted) {
           if (locationState.isLoading) {
             return const _InfoBanner(
@@ -1490,6 +1506,30 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
             );
           }
           return null;
+        }
+
+        if (status == LocationPermissionStatus.limited &&
+            !_backgroundPermissionDialogDismissed) {
+          return _BackgroundPermissionDialog(
+            message:
+                'バックグラウンドでも位置情報を共有するには「常に許可」を設定してください。',
+            actionLabel: '設定を開く',
+            onActionTap: () async {
+              await Geolocator.openAppSettings();
+              if (mounted) {
+                setState(() {
+                  _backgroundPermissionDialogDismissed = false;
+                });
+              }
+              ref.invalidate(locationPermissionStatusProvider);
+            },
+            onClose: () {
+              if (!mounted) return;
+              setState(() {
+                _backgroundPermissionDialogDismissed = true;
+              });
+            },
+          );
         }
 
         final (message, actionLabel, action) = switch (status) {
@@ -1516,7 +1556,16 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
               null,
               null,
             ),
+          LocationPermissionStatus.limited => (
+              '',
+              null,
+              null,
+            ),
         };
+
+        if (message.isEmpty && actionLabel == null && action == null) {
+          return null;
+        }
 
         return _InfoBanner(
           message: message,
@@ -1701,6 +1750,92 @@ class _InfoBanner extends StatelessWidget {
                   ),
                 ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BackgroundPermissionDialog extends StatelessWidget {
+  const _BackgroundPermissionDialog({
+    required this.message,
+    required this.actionLabel,
+    required this.onActionTap,
+    required this.onClose,
+  });
+
+  final String message;
+  final String actionLabel;
+  final FutureOr<void> Function()? onActionTap;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Positioned.fill(
+      child: Container(
+        color: Colors.black.withOpacity(0.6),
+        alignment: Alignment.center,
+        child: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxWidth: 420,
+              ),
+              child: Material(
+                borderRadius: BorderRadius.circular(24),
+                color: theme.colorScheme.surface,
+                elevation: 6,
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.location_on_outlined,
+                            color: theme.colorScheme.primary,
+                            size: 32,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'バックグラウンド位置情報の許可が必要です',
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        message,
+                        style: theme.textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: 24),
+                      Row(
+                        children: [
+                          TextButton(
+                            onPressed: onClose,
+                            child: const Text('閉じる'),
+                          ),
+                          const Spacer(),
+                          if (onActionTap != null)
+                            FilledButton(
+                              onPressed: onActionTap,
+                              child: Text(actionLabel),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
         ),
       ),
@@ -2503,7 +2638,6 @@ class GameSettingsSection extends ConsumerWidget {
                       },
                     ),
                   ),
-                ],
                   const SizedBox(height: 16),
                   Card(
                     child: ListTile(
@@ -2517,7 +2651,8 @@ class GameSettingsSection extends ConsumerWidget {
                       },
                     ),
                   ),
-                  const SizedBox(height: 16),
+                ],
+                const SizedBox(height: 16),
                 _ActionButtons(
                   gameId: gameId,
                   ownerUid: gameState.value?.ownerUid ?? '',
