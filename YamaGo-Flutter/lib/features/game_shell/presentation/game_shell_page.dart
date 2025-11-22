@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:ui' as ui;
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,6 +12,7 @@ import 'package:yamago_flutter/core/location/yamanote_constants.dart';
 import 'package:yamago_flutter/core/services/firebase_providers.dart';
 import 'package:yamago_flutter/features/auth/application/auth_providers.dart';
 import 'package:yamago_flutter/features/game/application/game_control_controller.dart';
+import 'package:yamago_flutter/features/game/application/game_event_providers.dart';
 import 'package:yamago_flutter/features/game/application/game_exit_controller.dart';
 import 'package:intl/intl.dart';
 
@@ -22,8 +22,10 @@ import 'package:yamago_flutter/features/chat/domain/chat_message.dart';
 import 'package:yamago_flutter/features/game/application/player_location_updater.dart';
 import 'package:yamago_flutter/features/game/application/player_providers.dart';
 import 'package:yamago_flutter/features/game/data/capture_repository.dart';
+import 'package:yamago_flutter/features/game/data/rescue_repository.dart';
 import 'package:yamago_flutter/features/game/data/game_repository.dart';
 import 'package:yamago_flutter/features/game/domain/game.dart';
+import 'package:yamago_flutter/features/game/domain/game_event.dart';
 import 'package:yamago_flutter/features/game/domain/player.dart';
 import 'package:yamago_flutter/features/game/presentation/game_settings_page.dart';
 import 'package:yamago_flutter/features/game/presentation/player_profile_edit_page.dart';
@@ -149,8 +151,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   bool _countdownAutoStartTriggered = false;
   bool _isLocatingUser = false;
   bool _isCapturing = false;
+  bool _isRescuing = false;
   bool _isClearingPin = false;
   bool _showGeneratorClearedAlert = false;
+  bool _showRescueAlert = false;
+  String? _rescueAlertMessage;
   static const int _pinClearDurationSeconds = 10;
   Timer? _pinClearTimer;
   int? _pinClearRemainingSeconds;
@@ -165,11 +170,13 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   BitmapDescriptor? _clearedPinMarkerDescriptor;
   final Set<String> _knownClearedPinIds = <String>{};
   final Set<String> _knownClearingPinIds = <String>{};
+  final Set<String> _handledRescueEventIds = <String>{};
   List<PinPoint> _latestPins = const [];
   double? _latestCaptureRadiusMeters;
   PlayerRole? _latestPlayerRole;
   GameStatus? _latestGameStatus;
   ProviderSubscription<AsyncValue<List<PinPoint>>>? _pinsSubscription;
+  ProviderSubscription<AsyncValue<List<GameEvent>>>? _gameEventsSubscription;
   ProviderSubscription<AsyncValue<Position>>? _locationSubscription;
   bool _hasCenteredOnUserInitially = false;
   bool _backgroundPermissionDialogDismissed = false;
@@ -190,9 +197,14 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         });
       },
     );
-    _locationSubscription =
-        ref.listenManual<AsyncValue<Position>>(locationStreamProvider,
-            (previous, next) {
+    _gameEventsSubscription = ref.listenManual<AsyncValue<List<GameEvent>>>(
+      gameEventsStreamProvider(widget.gameId),
+      (previous, next) {
+        next.whenData(_handleGameEvents);
+      },
+    );
+    _locationSubscription = ref.listenManual<AsyncValue<Position>>(
+        locationStreamProvider, (previous, next) {
       next.whenData((position) {
         _latestUserLocation = LatLng(position.latitude, position.longitude);
         _maybeCenterCameraOnUserInitially();
@@ -209,6 +221,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     _oniClearingAlertTimer?.cancel();
     _mapController?.dispose();
     _pinsSubscription?.close();
+    _gameEventsSubscription?.close();
     _locationSubscription?.close();
     super.dispose();
   }
@@ -253,6 +266,15 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     );
     final captureTarget = captureTargetInfo?.runner;
     final captureTargetDistance = captureTargetInfo?.distanceMeters;
+    final rescueTargetInfo = _findRescueTarget(
+      gameStatus: game?.status,
+      currentPlayer: currentPlayer,
+      captureRadiusMeters: captureRadius,
+      selfPosition: selfLatLng,
+      players: players,
+    );
+    final rescueTarget = rescueTargetInfo?.runner;
+    final rescueTargetDistance = rescueTargetInfo?.distanceMeters;
     final pins = pinsState.valueOrNull;
     if (pins != null) {
       _latestPins = pins;
@@ -272,21 +294,22 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     final nearbyPinDistance = nearbyPinInfo?.distanceMeters;
     final bool isCurrentlyClearing =
         _isClearingPin && _activeClearingPinId != null;
-    final PinPoint? activeClearingPin = isCurrentlyClearing
-        ? _findPinById(_activeClearingPinId!, pins)
-        : null;
+    final PinPoint? activeClearingPin =
+        isCurrentlyClearing ? _findPinById(_activeClearingPinId!, pins) : null;
     final double? activeClearingDistance = isCurrentlyClearing
         ? _distanceToPin(activeClearingPin, selfLatLng)
         : null;
-    final playerMarkers = _buildPlayerMarkers(
-      playersState: playersState,
-      currentUid: currentUid,
-      currentPlayer: currentPlayer,
-      selfPosition: selfLatLng,
-      game: game,
-    );
-    final bool shouldShowPins = game?.status == GameStatus.running;
-    final pinMarkers = shouldShowPins
+    final bool isGameRunning = game?.status == GameStatus.running;
+    final playerMarkers = isGameRunning
+        ? _buildPlayerMarkers(
+            playersState: playersState,
+            currentUid: currentUid,
+            currentPlayer: currentPlayer,
+            selfPosition: selfLatLng,
+            game: game,
+          )
+        : const <Marker>{};
+    final pinMarkers = isGameRunning
         ? _buildPinMarkers(
             pinsState: pinsState,
             game: game,
@@ -306,8 +329,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     final isCountdownActive = game?.status == GameStatus.countdown &&
         countdownRemainingSeconds != null &&
         countdownRemainingSeconds > 0;
-    final hasRunningCountdown =
-        game?.status == GameStatus.running && (runningRemainingSeconds ?? 0) > 0;
+    final hasRunningCountdown = game?.status == GameStatus.running &&
+        (runningRemainingSeconds ?? 0) > 0;
     _updateStatusTicker(isCountdownActive || hasRunningCountdown);
     final countdownOverlay = _buildCountdownOverlay(
       context: context,
@@ -343,24 +366,72 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     );
     final bool isMyLocationButtonEnabled =
         isLocationPermissionGranted && _mapController != null;
-    final bool showCaptureButton = captureTarget != null;
-    final int? pinCountdownSeconds = _pinClearRemainingSeconds;
-    final int? oniClearingCountdownSeconds = _oniClearingRemainingSeconds;
-    final bool showClearButton = nearbyPin != null;
+    final int pinCountdownSeconds = _pinClearRemainingSeconds ?? 0;
+    final int? oniClearingCountdownSecondsRaw = _oniClearingRemainingSeconds;
+    final int oniClearingCountdownSeconds = oniClearingCountdownSecondsRaw ?? 0;
     final double? clearButtonDistance =
         isCurrentlyClearing ? activeClearingDistance : nearbyPinDistance;
-    final bool showRunnerClearingOverlay =
-        (pinCountdownSeconds ?? 0) > 0 &&
-            currentPlayer?.role == PlayerRole.runner &&
-            isCurrentlyClearing;
+    final bool showRunnerClearingOverlay = pinCountdownSeconds > 0 &&
+        currentPlayer?.role == PlayerRole.runner &&
+        isCurrentlyClearing;
     final bool showOniClearingOverlay =
-        oniClearingCountdownSeconds != null &&
+        oniClearingCountdownSecondsRaw != null &&
             currentPlayer?.role == PlayerRole.oni &&
             _oniClearingPinId != null;
-    final bool hasPrimaryAction =
-        showStartButton || showCaptureButton || showClearButton;
-    final double myLocationButtonBottom = hasPrimaryAction ? 120.0 : 24.0;
-    final double mapBottomPadding = hasPrimaryAction ? 64.0 : 16.0;
+    final actionButtons = <Widget>[];
+    if (showStartButton) {
+      actionButtons.add(
+        _MapStartGameButton(
+          gameId: widget.gameId,
+          countdownSeconds: countdownSeconds,
+        ),
+      );
+    }
+    if (captureTarget != null) {
+      actionButtons.add(
+        _CaptureActionButton(
+          targetName: captureTarget.nickname,
+          distanceMeters: captureTargetDistance,
+          isLoading: _isCapturing,
+          onPressed:
+              _isCapturing ? null : () => _handleCapturePressed(captureTarget),
+        ),
+      );
+    }
+    if (rescueTarget != null) {
+      actionButtons.add(
+        _RescueActionButton(
+          targetName: rescueTarget.nickname,
+          distanceMeters: rescueTargetDistance,
+          isLoading: _isRescuing,
+          onPressed:
+              _isRescuing ? null : () => _handleRescuePressed(rescueTarget),
+        ),
+      );
+    }
+    if (nearbyPin != null && !_isClearingPin) {
+      actionButtons.add(
+        _ClearPinButton(
+          distanceMeters: clearButtonDistance,
+          isLoading: _isClearingPin,
+          countdownSeconds: _pinClearRemainingSeconds,
+          onPressed: () => _handleClearPinPressed(nearbyPin),
+        ),
+      );
+    }
+    final int actionCount = actionButtons.length;
+    final double myLocationButtonBottom = switch (actionCount) {
+      0 => 12.0,
+      1 => 96.0,
+      2 => 156.0,
+      _ => 196.0,
+    };
+    final double mapBottomPadding = switch (actionCount) {
+      0 => 16.0,
+      1 => 64.0,
+      2 => 96.0,
+      _ => 120.0,
+    };
 
     return Stack(
       children: [
@@ -421,7 +492,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
               ),
             ),
           ),
-        if (showRunnerClearingOverlay && pinCountdownSeconds != null)
+        if (showRunnerClearingOverlay)
           Positioned.fill(
             child: Container(
               color: Colors.black54,
@@ -436,7 +507,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
               ),
             ),
           ),
-        if (showOniClearingOverlay && oniClearingCountdownSeconds != null)
+        if (showOniClearingOverlay)
           Positioned.fill(
             child: Container(
               color: Colors.black54,
@@ -451,42 +522,35 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
               ),
             ),
           ),
-        if (showStartButton)
-          Positioned(
-            left: 24,
-            right: 24,
-            bottom: 24,
-            child: _MapStartGameButton(
-              gameId: widget.gameId,
-              countdownSeconds: countdownSeconds,
+        if (_showRescueAlert && _rescueAlertMessage != null)
+          Positioned.fill(
+            child: Container(
+              color: Colors.black54,
+              alignment: Alignment.center,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: _RescueAlert(
+                    message: _rescueAlertMessage!,
+                    onDismissed: _dismissRescueAlert,
+                  ),
+                ),
+              ),
             ),
           ),
-        if (showCaptureButton && captureTarget != null)
+        if (actionButtons.isNotEmpty)
           Positioned(
             left: 24,
             right: 24,
             bottom: 24,
-            child: _CaptureActionButton(
-              targetName: captureTarget.nickname,
-              distanceMeters: captureTargetDistance,
-              isLoading: _isCapturing,
-              onPressed: _isCapturing
-                  ? null
-                  : () => _handleCapturePressed(captureTarget),
-            ),
-          ),
-        if (showClearButton && !_isClearingPin)
-          Positioned(
-            left: 24,
-            right: 24,
-            bottom: 24,
-            child: _ClearPinButton(
-              distanceMeters: clearButtonDistance,
-              isLoading: _isClearingPin,
-              countdownSeconds: _pinClearRemainingSeconds,
-              onPressed: _isClearingPin || nearbyPin == null
-                  ? null
-                  : () => _handleClearPinPressed(nearbyPin),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var i = 0; i < actionButtons.length; i++) ...[
+                  if (i > 0) const SizedBox(height: 12),
+                  actionButtons[i],
+                ],
+              ],
             ),
           ),
         Positioned(
@@ -515,7 +579,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
               bottom: false,
               minimum: const EdgeInsets.only(bottom: 16),
               child: _RoleBadge(
-                role: currentPlayer!.role,
+                role: currentPlayer.role,
                 status: currentPlayer.status,
               ),
             ),
@@ -630,13 +694,6 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         );
         target = LatLng(position.latitude, position.longitude);
       }
-      if (target == null) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('現在地情報がまだ取得できていません。')),
-        );
-        return;
-      }
       _latestUserLocation = target;
       _cameraTarget = target;
       await _mapController?.animateCamera(
@@ -648,10 +705,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         SnackBar(content: Text('現在地の取得に失敗しました: $error')),
       );
     } finally {
-      if (!mounted) return;
-      setState(() {
-        _isLocatingUser = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLocatingUser = false;
+        });
+      }
     }
   }
 
@@ -694,6 +752,50 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       if (mounted) {
         setState(() {
           _isCapturing = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _handleRescuePressed(Player target) async {
+    if (_isRescuing) {
+      return;
+    }
+    final auth = ref.read(firebaseAuthProvider);
+    final rescuerUid = auth.currentUser?.uid;
+    if (rescuerUid == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('サインイン情報を確認できませんでした')),
+      );
+      return;
+    }
+    setState(() {
+      _isRescuing = true;
+    });
+    try {
+      final repo = ref.read(rescueRepositoryProvider);
+      await repo.rescueRunner(
+        gameId: widget.gameId,
+        rescuerUid: rescuerUid,
+        victimUid: target.uid,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${target.nickname} を救出しました')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        final message = error is StateError ? error.message : error.toString();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('救出に失敗しました: $message')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRescuing = false;
         });
       }
     }
@@ -943,8 +1045,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       _showOniClearingAlert(newPinId);
       return;
     }
-    final isActiveStillClearing =
-        previousActivePinId != null && clearingPins.contains(previousActivePinId);
+    final isActiveStillClearing = previousActivePinId != null &&
+        clearingPins.contains(previousActivePinId);
     if (!isActiveStillClearing) {
       final fallbackId = clearingPins.first;
       _showOniClearingAlert(fallbackId);
@@ -980,6 +1082,75 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     if (clearedPins.isEmpty && _showGeneratorClearedAlert) {
       _dismissGeneratorClearedAlert();
     }
+  }
+
+  void _handleGameEvents(List<GameEvent> events) {
+    if (events.isEmpty) return;
+    for (final event in events) {
+      if (event.type != GameEventType.rescue) continue;
+      if (_handledRescueEventIds.contains(event.id)) {
+        continue;
+      }
+      _handledRescueEventIds.add(event.id);
+      final currentUid = ref.read(firebaseAuthProvider).currentUser?.uid;
+      if (currentUid == null) {
+        continue;
+      }
+      final message = _messageForRescueEvent(event, currentUid);
+      if (message == null) {
+        continue;
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {
+          _showRescueAlert = true;
+          _rescueAlertMessage = message;
+        });
+      });
+      break;
+    }
+    _trimHandledRescueEvents();
+  }
+
+  String? _messageForRescueEvent(GameEvent event, String currentUid) {
+    final rescuerUid = event.rescuerUid;
+    final victimUid = event.victimUid;
+    final rescuerName = event.rescuerName ?? '逃走者';
+    final victimName = event.victimName ?? '逃走者';
+    if (rescuerUid == null || victimUid == null) {
+      return '$victimName が救出されました';
+    }
+    if (currentUid == rescuerUid) {
+      return '$victimName を救出しました';
+    }
+    if (currentUid == victimUid) {
+      return '$rescuerName から救出されました';
+    }
+    return '$victimName が救出されました';
+  }
+
+  void _trimHandledRescueEvents() {
+    const maxEntries = 100;
+    if (_handledRescueEventIds.length <= maxEntries) {
+      return;
+    }
+    final removeCount = _handledRescueEventIds.length - maxEntries;
+    final iterator = _handledRescueEventIds.iterator;
+    final idsToRemove = <String>{};
+    var removed = 0;
+    while (removed < removeCount && iterator.moveNext()) {
+      idsToRemove.add(iterator.current);
+      removed++;
+    }
+    _handledRescueEventIds.removeAll(idsToRemove);
+  }
+
+  void _dismissRescueAlert() {
+    if (!_showRescueAlert) return;
+    setState(() {
+      _showRescueAlert = false;
+      _rescueAlertMessage = null;
+    });
   }
 
   void _showGeneratorClearedAlertForPin(String _pinId) {
@@ -1127,8 +1298,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
 
     final picture = recorder.endRecording();
     final image = await picture.toImage(width.toInt(), height.toInt());
-    final bytes =
-        await image.toByteData(format: ui.ImageByteFormat.png);
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
     final buffer = bytes?.buffer.asUint8List();
     if (buffer == null) {
       throw StateError('Failed to encode marker image');
@@ -1185,6 +1355,57 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     );
   }
 
+  _RescueTargetInfo? _findRescueTarget({
+    required GameStatus? gameStatus,
+    required Player? currentPlayer,
+    required double? captureRadiusMeters,
+    required LatLng? selfPosition,
+    required List<Player>? players,
+  }) {
+    if (gameStatus != GameStatus.running) return null;
+    if (currentPlayer == null || currentPlayer.role != PlayerRole.runner) {
+      return null;
+    }
+    if (!currentPlayer.isActive ||
+        currentPlayer.status != PlayerStatus.active) {
+      return null;
+    }
+    if (captureRadiusMeters == null || captureRadiusMeters <= 0) {
+      return null;
+    }
+    if (selfPosition == null) return null;
+    if (players == null) return null;
+
+    Player? closestRunner;
+    double? closestDistance;
+    for (final player in players) {
+      if (player.uid == currentPlayer.uid) continue;
+      if (!player.isActive) continue;
+      if (player.role != PlayerRole.runner) continue;
+      if (player.status != PlayerStatus.downed) continue;
+      final targetPosition = player.position;
+      if (targetPosition == null) continue;
+      final distance = Geolocator.distanceBetween(
+        selfPosition.latitude,
+        selfPosition.longitude,
+        targetPosition.latitude,
+        targetPosition.longitude,
+      );
+      if (distance > captureRadiusMeters) continue;
+      if (closestDistance == null || distance < closestDistance) {
+        closestDistance = distance;
+        closestRunner = player;
+      }
+    }
+    if (closestRunner == null || closestDistance == null) {
+      return null;
+    }
+    return _RescueTargetInfo(
+      runner: closestRunner,
+      distanceMeters: closestDistance,
+    );
+  }
+
   _NearbyPinInfo? _findNearbyPin({
     required GameStatus? gameStatus,
     required Player? currentPlayer,
@@ -1196,7 +1417,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     if (currentPlayer == null || currentPlayer.role != PlayerRole.runner) {
       return null;
     }
-    if (!currentPlayer.isActive || currentPlayer.status != PlayerStatus.active) {
+    if (!currentPlayer.isActive ||
+        currentPlayer.status != PlayerStatus.active) {
       return null;
     }
     if (captureRadiusMeters == null || captureRadiusMeters <= 0) {
@@ -1511,8 +1733,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         if (status == LocationPermissionStatus.limited &&
             !_backgroundPermissionDialogDismissed) {
           return _BackgroundPermissionDialog(
-            message:
-                'バックグラウンドでも位置情報を共有するには「常に許可」を設定してください。',
+            message: 'バックグラウンドでも位置情報を共有するには「常に許可」を設定してください。',
             actionLabel: '設定を開く',
             onActionTap: () async {
               await Geolocator.openAppSettings();
@@ -2732,10 +2953,12 @@ class _RoleBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isOni = role == PlayerRole.oni;
-    final isCapturedRunner =
-        !isOni && status != PlayerStatus.active;
-    final label =
-        isOni ? '鬼' : isCapturedRunner ? '逃走者（ダウン中）' : '逃走者';
+    final isCapturedRunner = !isOni && status != PlayerStatus.active;
+    final label = isOni
+        ? '鬼'
+        : isCapturedRunner
+            ? '逃走者（ダウン中）'
+            : '逃走者';
     final baseColor = isOni ? Colors.redAccent : Colors.green;
     final color = isCapturedRunner
         ? Colors.grey.shade600.withOpacity(0.9)
@@ -2807,41 +3030,120 @@ class _CaptureActionButton extends StatelessWidget {
           ),
         ],
       ),
-      child: FilledButton.icon(
-        style: FilledButton.styleFrom(
-          backgroundColor: Colors.redAccent,
-          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-          foregroundColor: Colors.white,
-          textStyle: theme.textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
+      child: SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          style: FilledButton.styleFrom(
+            backgroundColor: Colors.redAccent,
+            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+            foregroundColor: Colors.white,
+            textStyle: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+          onPressed: isLoading ? null : onPressed,
+          icon: isLoading
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                )
+              : const Icon(Icons.gpp_maybe),
+          label: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('捕獲する'),
+              Text(
+                distanceLabel == null
+                    ? targetName
+                    : '$targetName（約${distanceLabel}m）',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: Colors.white.withOpacity(0.9),
+                ),
+              ),
+            ],
           ),
         ),
-        onPressed: isLoading ? null : onPressed,
-        icon: isLoading
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                ),
-              )
-            : const Icon(Icons.gpp_maybe),
-        label: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('捕獲する'),
-            Text(
-              distanceLabel == null
-                  ? targetName
-                  : '$targetName（約${distanceLabel}m）',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: Colors.white.withOpacity(0.9),
-              ),
+      ),
+    );
+  }
+}
+
+class _RescueActionButton extends StatelessWidget {
+  const _RescueActionButton({
+    required this.targetName,
+    required this.distanceMeters,
+    required this.isLoading,
+    required this.onPressed,
+  });
+
+  final String targetName;
+  final double? distanceMeters;
+  final bool isLoading;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final distanceLabel = distanceMeters == null
+        ? null
+        : (distanceMeters! >= 100
+            ? distanceMeters!.toStringAsFixed(0)
+            : distanceMeters!.toStringAsFixed(1));
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(32),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.25),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          style: FilledButton.styleFrom(
+            backgroundColor: Colors.teal,
+            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+            foregroundColor: Colors.white,
+            textStyle: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
             ),
-          ],
+          ),
+          onPressed: isLoading ? null : onPressed,
+          icon: isLoading
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                )
+              : const Icon(Icons.volunteer_activism),
+          label: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('救出する'),
+              Text(
+                distanceLabel == null
+                    ? targetName
+                    : '$targetName（約${distanceLabel}m）',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: Colors.white.withOpacity(0.9),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -2880,43 +3182,136 @@ class _ClearPinButton extends StatelessWidget {
           ),
         ],
       ),
-      child: FilledButton.icon(
-        style: FilledButton.styleFrom(
-          backgroundColor: Colors.amber.shade700,
-          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-          foregroundColor: Colors.white,
-          textStyle: theme.textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
+      child: SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          style: FilledButton.styleFrom(
+            backgroundColor: Colors.amber.shade700,
+            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+            foregroundColor: Colors.white,
+            textStyle: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+          onPressed: countdownSeconds != null || isLoading ? null : onPressed,
+          icon: countdownSeconds != null
+              ? const Icon(Icons.timer)
+              : isLoading
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  : const Icon(Icons.electric_bolt),
+          label: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                distanceLabel == null ? '発電所' : '発電所（約${distanceLabel}m）',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: Colors.white.withOpacity(0.9),
+                ),
+              ),
+            ],
           ),
         ),
-        onPressed:
-            countdownSeconds != null || isLoading ? null : onPressed,
-        icon: countdownSeconds != null
-            ? const Icon(Icons.timer)
-            : isLoading
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+      ),
+    );
+  }
+}
+
+class _RescueAlert extends StatelessWidget {
+  const _RescueAlert({
+    required this.message,
+    required this.onDismissed,
+  });
+
+  final String message;
+  final VoidCallback onDismissed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 250),
+      child: ConstrainedBox(
+        key: const ValueKey('rescue-alert'),
+        constraints: const BoxConstraints(maxWidth: 400),
+        child: Material(
+          borderRadius: BorderRadius.circular(24),
+          elevation: 16,
+          color: const Color(0xFF0F1A16).withOpacity(0.95),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 72,
+                  height: 72,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: [
+                        Color(0xFF4CAF50),
+                        Color(0xFF2E7D32),
+                      ],
                     ),
-                  )
-                : const Icon(Icons.electric_bolt),
-        label: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              distanceLabel == null
-                  ? '発電所'
-                  : '発電所（約${distanceLabel}m）',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: Colors.white.withOpacity(0.9),
-              ),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(
+                    Icons.volunteer_activism,
+                    size: 36,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  '救出が完了しました',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: Colors.white70,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      backgroundColor: Colors.tealAccent,
+                      foregroundColor: Colors.black,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: onDismissed,
+                    child: const Text(
+                      'OK',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -3106,6 +3501,16 @@ class _CaptureTargetInfo {
   final double distanceMeters;
 }
 
+class _RescueTargetInfo {
+  const _RescueTargetInfo({
+    required this.runner,
+    required this.distanceMeters,
+  });
+
+  final Player runner;
+  final double distanceMeters;
+}
+
 extension on Color {
   Color darken([double amount = 0.2]) {
     final hsl = HSLColor.fromColor(this);
@@ -3131,28 +3536,31 @@ class _MapStartGameButtonState extends ConsumerState<_MapStartGameButton> {
           ),
         ],
       ),
-      child: FilledButton(
-        style: FilledButton.styleFrom(
-          backgroundColor: Colors.redAccent,
-          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
-          textStyle: theme.textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.bold,
+      child: SizedBox(
+        width: double.infinity,
+        child: FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: Colors.redAccent,
+            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+            textStyle: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(32),
+            ),
           ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(32),
-          ),
+          onPressed: _isStarting ? null : _handlePressed,
+          child: _isStarting
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                )
+              : const Text('ゲームスタート'),
         ),
-        onPressed: _isStarting ? null : _handlePressed,
-        child: _isStarting
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                ),
-              )
-            : const Text('ゲームスタート'),
       ),
     );
   }

@@ -74,6 +74,8 @@ class GameRepository {
       'stats': {
         'captures': 0,
         'capturedTimes': 0,
+        'rescues': 0,
+        'rescuedTimes': 0,
       },
       'joinedAt': FieldValue.serverTimestamp(),
       if (avatarUrl != null) 'avatarUrl': avatarUrl,
