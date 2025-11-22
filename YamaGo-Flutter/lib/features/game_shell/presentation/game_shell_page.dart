@@ -155,12 +155,16 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   Timer? _pinClearTimer;
   int? _pinClearRemainingSeconds;
   String? _activeClearingPinId;
+  Timer? _oniClearingAlertTimer;
+  int? _oniClearingRemainingSeconds;
+  String? _oniClearingPinId;
   BitmapDescriptor? _downedMarkerDescriptor;
   BitmapDescriptor? _oniMarkerDescriptor;
   BitmapDescriptor? _runnerMarkerDescriptor;
   BitmapDescriptor? _generatorPinMarkerDescriptor;
   BitmapDescriptor? _clearedPinMarkerDescriptor;
   final Set<String> _knownClearedPinIds = <String>{};
+  final Set<String> _knownClearingPinIds = <String>{};
   List<PinPoint> _latestPins = const [];
   double? _latestCaptureRadiusMeters;
   PlayerRole? _latestPlayerRole;
@@ -178,6 +182,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         next.whenData((pins) {
           if (!mounted) return;
           _latestPins = pins;
+          _handlePinClearingNotifications(pins);
           _handlePinClearedNotifications(pins);
           _handleActiveClearingPinSnapshot(pins);
           _maybeCancelClearingWhenOutOfRange();
@@ -200,6 +205,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   void dispose() {
     _statusTicker?.cancel();
     _pinClearTimer?.cancel();
+    _oniClearingAlertTimer?.cancel();
     _mapController?.dispose();
     _pinsSubscription?.close();
     _locationSubscription?.close();
@@ -336,6 +342,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         isLocationPermissionGranted && _mapController != null;
     final bool showCaptureButton = captureTarget != null;
     final int? pinCountdownSeconds = _pinClearRemainingSeconds;
+    final int? oniClearingCountdownSeconds = _oniClearingRemainingSeconds;
     final bool showClearButton = nearbyPin != null;
     final double? clearButtonDistance =
         isCurrentlyClearing ? activeClearingDistance : nearbyPinDistance;
@@ -343,6 +350,10 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         (pinCountdownSeconds ?? 0) > 0 &&
             currentPlayer?.role == PlayerRole.runner &&
             isCurrentlyClearing;
+    final bool showOniClearingOverlay =
+        oniClearingCountdownSeconds != null &&
+            currentPlayer?.role == PlayerRole.oni &&
+            _oniClearingPinId != null;
     final bool hasPrimaryAction =
         showStartButton || showCaptureButton || showClearButton;
     final double myLocationButtonBottom = hasPrimaryAction ? 120.0 : 24.0;
@@ -417,6 +428,21 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
                   padding: const EdgeInsets.all(24),
                   child: _GeneratorClearingCountdownAlert(
                     remainingSeconds: pinCountdownSeconds,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        if (showOniClearingOverlay && oniClearingCountdownSeconds != null)
+          Positioned.fill(
+            child: Container(
+              color: Colors.black54,
+              alignment: Alignment.center,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: _GeneratorClearingCountdownAlert(
+                    remainingSeconds: oniClearingCountdownSeconds,
                   ),
                 ),
               ),
@@ -878,6 +904,47 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     );
   }
 
+  void _handlePinClearingNotifications(List<PinPoint> pins) {
+    if (_latestGameStatus != GameStatus.running ||
+        _latestPlayerRole != PlayerRole.oni) {
+      if (_knownClearingPinIds.isNotEmpty) {
+        _knownClearingPinIds.clear();
+      }
+      _dismissOniClearingAlert();
+      return;
+    }
+    final clearingPins = pins
+        .where((pin) => pin.status == PinStatus.clearing && !pin.cleared)
+        .map((pin) => pin.id)
+        .toSet();
+    final previousActivePinId = _oniClearingPinId;
+    final previousKnownPins = Set<String>.from(_knownClearingPinIds);
+    String? newPinId;
+    for (final id in clearingPins) {
+      if (!previousKnownPins.contains(id)) {
+        newPinId = id;
+        break;
+      }
+    }
+    _knownClearingPinIds
+      ..clear()
+      ..addAll(clearingPins);
+    if (clearingPins.isEmpty) {
+      _dismissOniClearingAlert();
+      return;
+    }
+    if (newPinId != null) {
+      _showOniClearingAlert(newPinId);
+      return;
+    }
+    final isActiveStillClearing =
+        previousActivePinId != null && clearingPins.contains(previousActivePinId);
+    if (!isActiveStillClearing) {
+      final fallbackId = clearingPins.first;
+      _showOniClearingAlert(fallbackId);
+    }
+  }
+
   void _handlePinClearedNotifications(List<PinPoint> pins) {
     if (_latestGameStatus != GameStatus.running ||
         _latestPlayerRole != PlayerRole.oni) {
@@ -921,6 +988,52 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         _showGeneratorClearedAlert = false;
       });
     }
+  }
+
+  void _showOniClearingAlert(String pinId) {
+    _oniClearingAlertTimer?.cancel();
+    if (!mounted) return;
+    setState(() {
+      _oniClearingPinId = pinId;
+      _oniClearingRemainingSeconds = _pinClearDurationSeconds;
+    });
+    _oniClearingAlertTimer =
+        Timer.periodic(const Duration(seconds: 1), (timer) {
+      final remaining = _oniClearingRemainingSeconds;
+      if (remaining == null || !mounted) {
+        timer.cancel();
+        _oniClearingAlertTimer = null;
+        return;
+      }
+      if (remaining <= 1) {
+        setState(() {
+          _oniClearingRemainingSeconds = 0;
+        });
+        timer.cancel();
+        _oniClearingAlertTimer = null;
+      } else {
+        setState(() {
+          _oniClearingRemainingSeconds = remaining - 1;
+        });
+      }
+    });
+  }
+
+  void _dismissOniClearingAlert() {
+    _oniClearingAlertTimer?.cancel();
+    _oniClearingAlertTimer = null;
+    if (!mounted) {
+      _oniClearingPinId = null;
+      _oniClearingRemainingSeconds = null;
+      return;
+    }
+    if (_oniClearingPinId == null && _oniClearingRemainingSeconds == null) {
+      return;
+    }
+    setState(() {
+      _oniClearingPinId = null;
+      _oniClearingRemainingSeconds = null;
+    });
   }
 
   Future<void> _loadCustomMarkers() async {
@@ -1188,6 +1301,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     final radius = switch ((viewerRole, targetRole)) {
       (PlayerRole.runner, PlayerRole.oni) =>
         game?.runnerSeeKillerRadiusM?.toDouble(),
+      (PlayerRole.runner, PlayerRole.runner) =>
+        game?.runnerSeeRunnerRadiusM?.toDouble(),
       (PlayerRole.oni, PlayerRole.runner) =>
         game?.killerDetectRunnerRadiusM?.toDouble(),
       _ => null,
@@ -1257,12 +1372,6 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     required double? runnerRadius,
     required double? killerRadius,
   }) {
-    final status = pin.status;
-    if (status == PinStatus.clearing ||
-        status == PinStatus.cleared ||
-        pin.cleared) {
-      return true;
-    }
     if (selfPosition == null || role == null) {
       return true;
     }
