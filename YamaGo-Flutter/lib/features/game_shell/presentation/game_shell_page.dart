@@ -461,6 +461,10 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
             zoom: _initialMapZoom,
           ),
           cameraTargetBounds: CameraTargetBounds(yamanoteBounds),
+          minMaxZoomPreference: const MinMaxZoomPreference(
+            yamanoteMinZoom,
+            yamanoteMaxZoom,
+          ),
           onMapCreated: (controller) {
             _mapController ??= controller;
             _maybeCenterCameraOnUserInitially();

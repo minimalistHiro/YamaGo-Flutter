@@ -86,6 +86,10 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
                     zoom: 12.5,
                   ),
                   cameraTargetBounds: CameraTargetBounds(yamanoteBounds),
+                  minMaxZoomPreference: const MinMaxZoomPreference(
+                    yamanoteMinZoom,
+                    yamanoteMaxZoom,
+                  ),
                   markers: _buildMarkers(
                     pins: displayPins,
                     activePinId: _activePinId,
@@ -99,7 +103,6 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
                   onCameraMove: (position) {
                     _cameraTarget = position.target;
                   },
-                  minMaxZoomPreference: const MinMaxZoomPreference(10, 18),
                 ),
                 if (pinsState.isLoading)
                   const Center(child: CircularProgressIndicator()),
