@@ -146,6 +146,7 @@ class GameMapSection extends ConsumerStatefulWidget {
 class _GameMapSectionState extends ConsumerState<GameMapSection> {
   GoogleMapController? _mapController;
   LatLng _cameraTarget = yamanoteCenter;
+  static const double _initialMapZoom = 13.5;
   LatLng? _latestUserLocation;
   Timer? _statusTicker;
   bool _isStatusTickerActive = false;
@@ -389,13 +390,14 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     final int oniClearingCountdownSeconds = oniClearingCountdownSecondsRaw ?? 0;
     final double? clearButtonDistance =
         isCurrentlyClearing ? activeClearingDistance : nearbyPinDistance;
-    final bool showRunnerClearingOverlay = pinCountdownSeconds > 0 &&
+    final bool showRunnerClearingOverlay = isGameRunning &&
+        pinCountdownSeconds > 0 &&
         currentPlayer?.role == PlayerRole.runner &&
         isCurrentlyClearing;
-    final bool showOniClearingOverlay =
+    final bool showOniClearingOverlay = isGameRunning &&
         oniClearingCountdownSecondsRaw != null &&
-            currentPlayer?.role == PlayerRole.oni &&
-            _oniClearingPinId != null;
+        currentPlayer?.role == PlayerRole.oni &&
+        _oniClearingPinId != null;
     final actionButtons = <Widget>[];
     if (showStartButton) {
       actionButtons.add(
@@ -456,7 +458,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         GoogleMap(
           initialCameraPosition: CameraPosition(
             target: _cameraTarget,
-            zoom: 12.5,
+            zoom: _initialMapZoom,
           ),
           cameraTargetBounds: CameraTargetBounds(yamanoteBounds),
           onMapCreated: (controller) {
@@ -501,7 +503,9 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
             ),
           ),
         ),
-        if (_showGeneratorClearedAlert && currentPlayer?.role == PlayerRole.oni)
+        if (isGameRunning &&
+            _showGeneratorClearedAlert &&
+            currentPlayer?.role == PlayerRole.oni)
           Positioned.fill(
             child: Container(
               color: Colors.black54,
@@ -546,7 +550,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
               ),
             ),
           ),
-        if (_showRescueAlert && _rescueAlertMessage != null)
+        if (isGameRunning && _showRescueAlert && _rescueAlertMessage != null)
           Positioned.fill(
             child: Container(
               color: Colors.black54,
@@ -699,7 +703,12 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     _cameraTarget = target;
     unawaited(
       controller.animateCamera(
-        CameraUpdate.newLatLng(target),
+        CameraUpdate.newCameraPosition(
+          CameraPosition(
+            target: target,
+            zoom: _initialMapZoom,
+          ),
+        ),
       ),
     );
   }
@@ -2367,7 +2376,7 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
   }
 
   void _dismissKeyboard() {
-    FocusScope.of(context).unfocus();
+    FocusManager.instance.primaryFocus?.unfocus();
   }
 
   Future<void> _sendMessage(BuildContext context, Player player) async {
@@ -3747,6 +3756,10 @@ class _ActionButtonsState extends ConsumerState<_ActionButtons> {
     return status == GameStatus.countdown || status == GameStatus.running;
   }
 
+  void _dismissKeyboard() {
+    FocusManager.instance.primaryFocus?.unfocus();
+  }
+
   @override
   Widget build(BuildContext context) {
     final ref = this.ref;
@@ -3758,6 +3771,7 @@ class _ActionButtonsState extends ConsumerState<_ActionButtons> {
             onPressed: _isClaimingOwner
                 ? null
                 : () async {
+                    _dismissKeyboard();
                     final confirmed = await showDialog<bool>(
                       context: context,
                       builder: (context) => AlertDialog(
@@ -3820,6 +3834,7 @@ class _ActionButtonsState extends ConsumerState<_ActionButtons> {
             onPressed: _isEndingGame
                 ? null
                 : () async {
+                    _dismissKeyboard();
                     final confirmed = await showDialog<bool>(
                       context: context,
                       builder: (context) => AlertDialog(
@@ -3890,6 +3905,7 @@ class _ActionButtonsState extends ConsumerState<_ActionButtons> {
           onPressed: _isLeaving
               ? null
               : () async {
+                  _dismissKeyboard();
                   final confirmed = await showDialog<bool>(
                     context: context,
                     builder: (context) => AlertDialog(
@@ -3951,6 +3967,7 @@ class _ActionButtonsState extends ConsumerState<_ActionButtons> {
             onPressed: _isDeletingGame
                 ? null
                 : () async {
+                    _dismissKeyboard();
                     final confirmed = await showDialog<bool>(
                       context: context,
                       builder: (context) => AlertDialog(
