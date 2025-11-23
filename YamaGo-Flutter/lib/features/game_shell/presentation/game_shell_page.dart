@@ -163,11 +163,12 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   bool _hasSeededGameEvents = false;
   bool _hasSeededClearedPins = false;
   static const int _pinClearDurationSeconds = 10;
+  static const int _oniClearingAlertDurationSeconds = 5;
   Timer? _pinClearTimer;
   int? _pinClearRemainingSeconds;
   String? _activeClearingPinId;
   Timer? _oniClearingAlertTimer;
-  int? _oniClearingRemainingSeconds;
+  bool _isOniClearingAlertVisible = false;
   String? _oniClearingPinId;
   BitmapDescriptor? _downedMarkerDescriptor;
   BitmapDescriptor? _oniMarkerDescriptor;
@@ -323,6 +324,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         ? _distanceToPin(activeClearingPin, selfLatLng)
         : null;
     final bool isGameRunning = game?.status == GameStatus.running;
+    final playerRole = currentPlayer?.role;
     final playerMarkers = isGameRunning
         ? _buildPlayerMarkers(
             playersState: playersState,
@@ -390,8 +392,6 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     final bool isMyLocationButtonEnabled =
         isLocationPermissionGranted && _mapController != null;
     final int pinCountdownSeconds = _pinClearRemainingSeconds ?? 0;
-    final int? oniClearingCountdownSecondsRaw = _oniClearingRemainingSeconds;
-    final int oniClearingCountdownSeconds = oniClearingCountdownSecondsRaw ?? 0;
     final double? clearButtonDistance =
         isCurrentlyClearing ? activeClearingDistance : nearbyPinDistance;
     final bool showRunnerClearingOverlay = isGameRunning &&
@@ -399,7 +399,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         currentPlayer?.role == PlayerRole.runner &&
         isCurrentlyClearing;
     final bool showOniClearingOverlay = isGameRunning &&
-        oniClearingCountdownSecondsRaw != null &&
+        _isOniClearingAlertVisible &&
         currentPlayer?.role == PlayerRole.oni &&
         _oniClearingPinId != null;
     final actionButtons = <Widget>[];
@@ -513,7 +513,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         ),
         if (isGameRunning &&
             _showGeneratorClearedAlert &&
-            currentPlayer?.role == PlayerRole.oni)
+            playerRole != null)
           Positioned.fill(
             child: Container(
               color: Colors.black54,
@@ -522,6 +522,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
                 child: Padding(
                   padding: const EdgeInsets.all(24),
                   child: _GeneratorClearedAlert(
+                    playerRole: playerRole,
                     onDismissed: _dismissGeneratorClearedAlert,
                   ),
                 ),
@@ -551,9 +552,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
               child: SafeArea(
                 child: Padding(
                   padding: const EdgeInsets.all(24),
-                  child: _GeneratorClearingCountdownAlert(
-                    remainingSeconds: oniClearingCountdownSeconds,
-                  ),
+                  child: const _OniClearingAlert(),
                 ),
               ),
             ),
@@ -1169,8 +1168,9 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   }
 
   void _handlePinClearedNotifications(List<PinPoint> pins) {
-    if (_latestGameStatus != GameStatus.running ||
-        _latestPlayerRole != PlayerRole.oni) {
+    final isParticipant = _latestPlayerRole == PlayerRole.oni ||
+        _latestPlayerRole == PlayerRole.runner;
+    if (_latestGameStatus != GameStatus.running || !isParticipant) {
       if (_knownClearedPinIds.isNotEmpty) {
         _knownClearedPinIds.clear();
       }
@@ -1342,28 +1342,18 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     if (!mounted) return;
     setState(() {
       _oniClearingPinId = pinId;
-      _oniClearingRemainingSeconds = _pinClearDurationSeconds;
+      _isOniClearingAlertVisible = true;
     });
-    _oniClearingAlertTimer =
-        Timer.periodic(const Duration(seconds: 1), (timer) {
-      final remaining = _oniClearingRemainingSeconds;
-      if (remaining == null || !mounted) {
-        timer.cancel();
+    _oniClearingAlertTimer = Timer(
+      const Duration(seconds: _oniClearingAlertDurationSeconds),
+      () {
         _oniClearingAlertTimer = null;
-        return;
-      }
-      if (remaining <= 1) {
+        if (!mounted) return;
         setState(() {
-          _oniClearingRemainingSeconds = 0;
+          _isOniClearingAlertVisible = false;
         });
-        timer.cancel();
-        _oniClearingAlertTimer = null;
-      } else {
-        setState(() {
-          _oniClearingRemainingSeconds = remaining - 1;
-        });
-      }
-    });
+      },
+    );
   }
 
   void _dismissOniClearingAlert() {
@@ -1371,15 +1361,15 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     _oniClearingAlertTimer = null;
     if (!mounted) {
       _oniClearingPinId = null;
-      _oniClearingRemainingSeconds = null;
+      _isOniClearingAlertVisible = false;
       return;
     }
-    if (_oniClearingPinId == null && _oniClearingRemainingSeconds == null) {
+    if (_oniClearingPinId == null && !_isOniClearingAlertVisible) {
       return;
     }
     setState(() {
       _oniClearingPinId = null;
-      _oniClearingRemainingSeconds = null;
+      _isOniClearingAlertVisible = false;
     });
   }
 
@@ -3625,14 +3615,20 @@ class _CaptureAlert extends StatelessWidget {
 
 class _GeneratorClearedAlert extends StatelessWidget {
   const _GeneratorClearedAlert({
+    required this.playerRole,
     required this.onDismissed,
   });
 
+  final PlayerRole playerRole;
   final VoidCallback onDismissed;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isOni = playerRole == PlayerRole.oni;
+    final description = isOni
+        ? '逃走者が発電所を停止させました。地図を確認して即座に対応してください。'
+        : '仲間の逃走者が発電所を停止させました。マップで状況を確認して次の発電所へ向かいましょう。';
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 250),
       child: ConstrainedBox(
@@ -3677,7 +3673,7 @@ class _GeneratorClearedAlert extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  '逃走者が発電所を停止させました。地図を確認して即座に対応してください。',
+                  description,
                   textAlign: TextAlign.center,
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: Colors.white70,
@@ -3777,6 +3773,64 @@ class _GeneratorClearingCountdownAlert extends StatelessWidget {
               child: CircularProgressIndicator(
                 valueColor: AlwaysStoppedAnimation<Color>(Colors.orangeAccent),
                 strokeWidth: 4,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OniClearingAlert extends StatelessWidget {
+  const _OniClearingAlert();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      borderRadius: BorderRadius.circular(24),
+      elevation: 16,
+      color: const Color(0xFF0F1115).withOpacity(0.95),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [
+                    Color(0xFFFFC857),
+                    Color(0xFFFF9500),
+                  ],
+                ),
+              ),
+              alignment: Alignment.center,
+              child: const Icon(
+                Icons.warning_amber_rounded,
+                size: 36,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              '逃走者が発電所を解除中です',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.headlineSmall?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'マップを確認して最寄りの発電所へ急行してください。',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: Colors.white70,
               ),
             ),
           ],
