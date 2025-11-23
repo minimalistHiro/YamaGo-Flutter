@@ -17,6 +17,7 @@ class CaptureRepository {
     final attackerRef = gameRef.collection('players').doc(attackerUid);
     final victimRef = gameRef.collection('players').doc(victimUid);
     final captureLogRef = gameRef.collection('captures').doc();
+    final eventRef = gameRef.collection('events').doc();
 
     await _firestore.runTransaction((transaction) async {
       final attackerSnap = await transaction.get(attackerRef);
@@ -40,6 +41,8 @@ class CaptureRepository {
       }
 
       final now = FieldValue.serverTimestamp();
+      final attackerName = attacker['nickname'] as String? ?? 'No name';
+      final victimName = victim['nickname'] as String? ?? 'No name';
       transaction.update(victimRef, {
         'status': 'downed',
         'capturedAt': now,
@@ -51,6 +54,18 @@ class CaptureRepository {
       transaction.set(captureLogRef, {
         'attackerUid': attackerUid,
         'victimUid': victimUid,
+        'createdAt': now,
+      });
+      transaction.set(eventRef, {
+        'type': 'capture',
+        'actorUid': attackerUid,
+        'actorName': attackerName,
+        'attackerUid': attackerUid,
+        'attackerName': attackerName,
+        'targetUid': victimUid,
+        'targetName': victimName,
+        'victimUid': victimUid,
+        'victimName': victimName,
         'createdAt': now,
       });
     });

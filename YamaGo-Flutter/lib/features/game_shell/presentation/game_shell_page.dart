@@ -157,7 +157,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   bool _isClearingPin = false;
   bool _showGeneratorClearedAlert = false;
   bool _showRescueAlert = false;
+  bool _showCaptureAlert = false;
   String? _rescueAlertMessage;
+  String? _captureAlertMessage;
+  bool _hasSeededGameEvents = false;
+  bool _hasSeededClearedPins = false;
   static const int _pinClearDurationSeconds = 10;
   Timer? _pinClearTimer;
   int? _pinClearRemainingSeconds;
@@ -172,7 +176,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   BitmapDescriptor? _clearedPinMarkerDescriptor;
   final Set<String> _knownClearedPinIds = <String>{};
   final Set<String> _knownClearingPinIds = <String>{};
-  final Set<String> _handledRescueEventIds = <String>{};
+  final Set<String> _handledGameEventIds = <String>{};
   List<PinPoint> _latestPins = const [];
   double? _latestCaptureRadiusMeters;
   PlayerRole? _latestPlayerRole;
@@ -565,6 +569,22 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
                   child: _RescueAlert(
                     message: _rescueAlertMessage!,
                     onDismissed: _dismissRescueAlert,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        if (isGameRunning && _showCaptureAlert && _captureAlertMessage != null)
+          Positioned.fill(
+            child: Container(
+              color: Colors.black54,
+              alignment: Alignment.center,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: _CaptureAlert(
+                    message: _captureAlertMessage!,
+                    onDismissed: _dismissCaptureAlert,
                   ),
                 ),
               ),
@@ -1154,6 +1174,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       if (_knownClearedPinIds.isNotEmpty) {
         _knownClearedPinIds.clear();
       }
+      _hasSeededClearedPins = false;
       _dismissGeneratorClearedAlert();
       return;
     }
@@ -1161,6 +1182,13 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         .where((pin) => pin.status == PinStatus.cleared || pin.cleared)
         .map((pin) => pin.id)
         .toSet();
+    if (!_hasSeededClearedPins) {
+      _hasSeededClearedPins = true;
+      _knownClearedPinIds
+        ..clear()
+        ..addAll(clearedPins);
+      return;
+    }
     String? newPinId;
     for (final id in clearedPins) {
       if (!_knownClearedPinIds.contains(id)) {
@@ -1180,38 +1208,68 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   }
 
   void _handleGameEvents(List<GameEvent> events) {
-    if (events.isEmpty) return;
-    for (final event in events) {
-      if (event.type != GameEventType.rescue) continue;
-      if (_handledRescueEventIds.contains(event.id)) {
-        continue;
+    if (!_hasSeededGameEvents) {
+      _hasSeededGameEvents = true;
+      if (events.isNotEmpty) {
+        for (final event in events) {
+          _handledGameEventIds.add(event.id);
+        }
+        _trimHandledGameEvents();
       }
-      _handledRescueEventIds.add(event.id);
-      final currentUid = ref.read(firebaseAuthProvider).currentUser?.uid;
-      if (currentUid == null) {
-        continue;
-      }
-      final message = _messageForRescueEvent(event, currentUid);
-      if (message == null) {
-        continue;
-      }
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        setState(() {
-          _showRescueAlert = true;
-          _rescueAlertMessage = message;
-        });
-      });
-      break;
+      return;
     }
-    _trimHandledRescueEvents();
+    if (events.isEmpty) return;
+    final currentUid = ref.read(firebaseAuthProvider).currentUser?.uid;
+    for (final event in events) {
+      if (event.type == GameEventType.unknown) continue;
+      if (_handledGameEventIds.contains(event.id)) {
+        continue;
+      }
+      _handledGameEventIds.add(event.id);
+      if (event.type == GameEventType.rescue) {
+        if (currentUid == null) {
+          continue;
+        }
+        final message = _messageForRescueEvent(event, currentUid);
+        if (message == null) {
+          continue;
+        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {
+            _showCaptureAlert = false;
+            _captureAlertMessage = null;
+            _showRescueAlert = true;
+            _rescueAlertMessage = message;
+          });
+        });
+        break;
+      }
+      if (event.type == GameEventType.capture) {
+        final message = _messageForCaptureEvent(event);
+        if (message == null) {
+          continue;
+        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {
+            _showRescueAlert = false;
+            _rescueAlertMessage = null;
+            _showCaptureAlert = true;
+            _captureAlertMessage = message;
+          });
+        });
+        break;
+      }
+    }
+    _trimHandledGameEvents();
   }
 
   String? _messageForRescueEvent(GameEvent event, String currentUid) {
-    final rescuerUid = event.rescuerUid;
-    final victimUid = event.victimUid;
-    final rescuerName = event.rescuerName ?? '逃走者';
-    final victimName = event.victimName ?? '逃走者';
+    final rescuerUid = event.actorUid;
+    final victimUid = event.targetUid;
+    final rescuerName = event.actorName ?? '逃走者';
+    final victimName = event.targetName ?? '逃走者';
     if (rescuerUid == null || victimUid == null) {
       return '$victimName が救出されました';
     }
@@ -1224,20 +1282,29 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     return '$victimName が救出されました';
   }
 
-  void _trimHandledRescueEvents() {
+  String? _messageForCaptureEvent(GameEvent event) {
+    final attackerName = event.actorName ?? '鬼';
+    final victimName = event.targetName ?? '逃走者';
+    if (_latestPlayerRole == PlayerRole.oni) {
+      return '$attackerName が $victimName を捕獲しました';
+    }
+    return '$victimName が捕獲されました';
+  }
+
+  void _trimHandledGameEvents() {
     const maxEntries = 100;
-    if (_handledRescueEventIds.length <= maxEntries) {
+    if (_handledGameEventIds.length <= maxEntries) {
       return;
     }
-    final removeCount = _handledRescueEventIds.length - maxEntries;
-    final iterator = _handledRescueEventIds.iterator;
+    final removeCount = _handledGameEventIds.length - maxEntries;
+    final iterator = _handledGameEventIds.iterator;
     final idsToRemove = <String>{};
     var removed = 0;
     while (removed < removeCount && iterator.moveNext()) {
       idsToRemove.add(iterator.current);
       removed++;
     }
-    _handledRescueEventIds.removeAll(idsToRemove);
+    _handledGameEventIds.removeAll(idsToRemove);
   }
 
   void _dismissRescueAlert() {
@@ -1245,6 +1312,14 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     setState(() {
       _showRescueAlert = false;
       _rescueAlertMessage = null;
+    });
+  }
+
+  void _dismissCaptureAlert() {
+    if (!_showCaptureAlert) return;
+    setState(() {
+      _showCaptureAlert = false;
+      _captureAlertMessage = null;
     });
   }
 
@@ -3431,6 +3506,99 @@ class _RescueAlert extends StatelessWidget {
                     style: ElevatedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       backgroundColor: Colors.tealAccent,
+                      foregroundColor: Colors.black,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: onDismissed,
+                    child: const Text(
+                      'OK',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CaptureAlert extends StatelessWidget {
+  const _CaptureAlert({
+    required this.message,
+    required this.onDismissed,
+  });
+
+  final String message;
+  final VoidCallback onDismissed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 250),
+      child: ConstrainedBox(
+        key: const ValueKey('capture-alert'),
+        constraints: const BoxConstraints(maxWidth: 400),
+        child: Material(
+          borderRadius: BorderRadius.circular(24),
+          elevation: 16,
+          color: const Color(0xFF190C0C).withOpacity(0.95),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 72,
+                  height: 72,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: [
+                        Color(0xFFFF5252),
+                        Color(0xFFD50000),
+                      ],
+                    ),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(
+                    Icons.security,
+                    size: 36,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  '捕獲が発生しました',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: Colors.white70,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      backgroundColor: Colors.deepOrangeAccent,
                       foregroundColor: Colors.black,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),

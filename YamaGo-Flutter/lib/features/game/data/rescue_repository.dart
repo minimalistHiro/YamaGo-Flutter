@@ -69,8 +69,12 @@ class RescueRepository {
       });
       transaction.set(eventRef, {
         'type': 'rescue',
+        'actorUid': rescuerUid,
+        'actorName': rescuerData['nickname'] as String? ?? 'No name',
         'rescuerUid': rescuerUid,
         'rescuerName': rescuerData['nickname'] as String? ?? 'No name',
+        'targetUid': victimUid,
+        'targetName': victimData['nickname'] as String? ?? 'No name',
         'victimUid': victimUid,
         'victimName': victimData['nickname'] as String? ?? 'No name',
         'createdAt': now,
