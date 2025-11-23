@@ -300,6 +300,12 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     final rescueTarget = rescueTargetInfo?.runner;
     final rescueTargetDistance = rescueTargetInfo?.distanceMeters;
     final pins = pinsState.valueOrNull;
+    final int? totalGenerators = pins?.length;
+    final int? clearedGenerators = pins == null
+        ? null
+        : pins
+            .where((pin) => pin.status == PinStatus.cleared || pin.cleared)
+            .length;
     if (pins != null) {
       _latestPins = pins;
     }
@@ -504,7 +510,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
                   const SizedBox(width: 8),
                   ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 220),
-                    child: PlayerHud(playersState: playersState),
+                    child: PlayerHud(
+                      playersState: playersState,
+                      totalGenerators: totalGenerators,
+                      clearedGenerators: clearedGenerators,
+                    ),
                   ),
                 ],
               ),
