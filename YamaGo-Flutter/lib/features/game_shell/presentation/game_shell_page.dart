@@ -182,6 +182,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   double? _latestCaptureRadiusMeters;
   PlayerRole? _latestPlayerRole;
   GameStatus? _latestGameStatus;
+  bool _hasInitializedGameStatus = false;
+  bool _showGameEndPopup = false;
+  bool _showGameSummaryPopup = false;
+  bool _hasShownGameEndPopup = false;
+  DateTime? _gameEndedAt;
   ProviderSubscription<AsyncValue<List<PinPoint>>>? _pinsSubscription;
   ProviderSubscription<AsyncValue<List<GameEvent>>>? _gameEventsSubscription;
   ProviderSubscription<AsyncValue<Position>>? _locationSubscription;
@@ -261,6 +266,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       );
     }
 
+    final previousGameStatus = _latestGameStatus;
     final game = gameState.valueOrNull;
     final captureRadius = game?.captureRadiusM?.toDouble();
     _latestCaptureRadiusMeters = captureRadius;
@@ -311,6 +317,10 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     }
     _latestPlayerRole = currentPlayer?.role;
     _latestGameStatus = game?.status;
+    _handleGameEndStatusChange(
+      previousStatus: previousGameStatus,
+      currentStatus: _latestGameStatus,
+    );
     _maybeCancelClearingWhenPlayerUnavailable(currentPlayer);
     _maybeCancelClearingWhenGameInactive(game);
     final nearbyPinInfo = _findNearbyPin(
@@ -463,6 +473,12 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       _ => 120.0,
     };
 
+    final bool allPinsCleared = _areAllPinsCleared(pins);
+    final int capturedPlayersCount = _capturedRunnersCount(players);
+    final int summaryClearedGenerators = clearedGenerators ?? 0;
+    final String formattedGameDuration =
+        _formatElapsedDuration(_calculateGameDurationSeconds(game));
+
     return Stack(
       children: [
         GoogleMap(
@@ -488,8 +504,6 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
           circles: circles,
           padding: EdgeInsets.only(bottom: mapBottomPadding),
         ),
-        if (permissionOverlay != null) permissionOverlay,
-        if (countdownOverlay != null) countdownOverlay,
         Positioned(
           top: 0,
           left: 0,
@@ -521,6 +535,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
             ),
           ),
         ),
+        if (permissionOverlay != null) permissionOverlay,
+        if (countdownOverlay != null) countdownOverlay,
         if (isGameRunning &&
             _showGeneratorClearedAlert &&
             playerRole != null)
@@ -599,6 +615,40 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
               ),
             ),
           ),
+        if (_showGameEndPopup)
+          Positioned.fill(
+            child: Container(
+              color: Colors.black54,
+              alignment: Alignment.center,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: _GameEndResultPopup(
+                    isRunnerVictory: allPinsCleared,
+                    onNext: _handleGameEndPopupNext,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        if (_showGameSummaryPopup)
+          Positioned.fill(
+            child: Container(
+              color: Colors.black54,
+              alignment: Alignment.center,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: _GameSummaryPopup(
+                    capturedPlayersCount: capturedPlayersCount,
+                    generatorsClearedCount: summaryClearedGenerators,
+                    gameDurationLabel: formattedGameDuration,
+                    onClose: _handleGameSummaryClose,
+                  ),
+                ),
+              ),
+            ),
+          ),
         if (actionButtons.isNotEmpty)
           Positioned(
             left: 24,
@@ -663,6 +713,64 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       _statusTicker = null;
       _isStatusTickerActive = false;
     }
+  }
+
+  void _handleGameEndStatusChange({
+    required GameStatus? previousStatus,
+    required GameStatus? currentStatus,
+  }) {
+    if (currentStatus == null) return;
+    if (!_hasInitializedGameStatus) {
+      _hasInitializedGameStatus = true;
+      if (currentStatus == GameStatus.ended) {
+        _hasShownGameEndPopup = true;
+      }
+      return;
+    }
+    if (currentStatus == GameStatus.ended &&
+        previousStatus != GameStatus.ended &&
+        !_hasShownGameEndPopup) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {
+          _showGameEndPopup = true;
+          _showGameSummaryPopup = false;
+          _hasShownGameEndPopup = true;
+          _gameEndedAt = DateTime.now();
+        });
+      });
+      return;
+    }
+    if (currentStatus != GameStatus.ended && _hasShownGameEndPopup) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {
+          _clearGameEndPopupState();
+        });
+      });
+    }
+  }
+
+  void _clearGameEndPopupState() {
+    _showGameEndPopup = false;
+    _showGameSummaryPopup = false;
+    _hasShownGameEndPopup = false;
+    _gameEndedAt = null;
+  }
+
+  void _handleGameEndPopupNext() {
+    if (!_showGameEndPopup) return;
+    setState(() {
+      _showGameEndPopup = false;
+      _showGameSummaryPopup = true;
+    });
+  }
+
+  void _handleGameSummaryClose() {
+    if (!_showGameSummaryPopup) return;
+    setState(() {
+      _showGameSummaryPopup = false;
+    });
   }
 
   Future<void> _initializeKodouPlayer() async {
@@ -2142,6 +2250,60 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     final secs = seconds % 60;
     return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
   }
+
+  int? _calculateGameDurationSeconds(Game? game) {
+    final startAt = game?.startAt;
+    final endedAt = _gameEndedAt;
+    if (startAt == null || endedAt == null) {
+      return null;
+    }
+    final seconds = endedAt.difference(startAt).inSeconds;
+    if (seconds < 0) {
+      return 0;
+    }
+    return seconds;
+  }
+
+  String _formatElapsedDuration(int? seconds) {
+    if (seconds == null) return '---';
+    if (seconds <= 0) return '0秒';
+    final hours = seconds ~/ 3600;
+    final minutes = (seconds % 3600) ~/ 60;
+    final secs = seconds % 60;
+    if (hours > 0) {
+      return '${hours}時間${minutes}分${secs}秒';
+    }
+    if (minutes > 0) {
+      return '${minutes}分${secs}秒';
+    }
+    return '${secs}秒';
+  }
+
+  int _capturedRunnersCount(List<Player>? players) {
+    if (players == null || players.isEmpty) {
+      return 0;
+    }
+    var count = 0;
+    for (final player in players) {
+      if (player.role == PlayerRole.runner &&
+          player.stats.capturedTimes > 0) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  bool _areAllPinsCleared(List<PinPoint>? pins) {
+    if (pins == null || pins.isEmpty) {
+      return false;
+    }
+    for (final pin in pins) {
+      if (!(pin.status == PinStatus.cleared || pin.cleared)) {
+        return false;
+      }
+    }
+    return true;
+  }
 }
 
 class _InfoBanner extends StatelessWidget {
@@ -2184,6 +2346,144 @@ class _InfoBanner extends StatelessWidget {
                 ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GameEndResultPopup extends StatelessWidget {
+  const _GameEndResultPopup({
+    required this.isRunnerVictory,
+    required this.onNext,
+  });
+
+  final bool isRunnerVictory;
+  final VoidCallback onNext;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final victoryText = isRunnerVictory ? '逃走者の勝利！' : '鬼の勝利！';
+    final victoryColor = isRunnerVictory
+        ? const Color(0xFF22B59B)
+        : theme.colorScheme.error;
+    return Card(
+      color: theme.colorScheme.surface.withOpacity(0.96),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'ゲームが終了しました',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.2,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              victoryText,
+              style: theme.textTheme.headlineSmall?.copyWith(
+                    color: victoryColor,
+                    fontWeight: FontWeight.w800,
+                  ) ??
+                  TextStyle(
+                    fontSize: 24,
+                    color: victoryColor,
+                    fontWeight: FontWeight.w800,
+                  ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: onNext,
+                child: const Text('結果を見る'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GameSummaryPopup extends StatelessWidget {
+  const _GameSummaryPopup({
+    required this.capturedPlayersCount,
+    required this.generatorsClearedCount,
+    required this.gameDurationLabel,
+    required this.onClose,
+  });
+
+  final int capturedPlayersCount;
+  final int generatorsClearedCount;
+  final String gameDurationLabel;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    Widget buildRow(String label, String value) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Text(
+              value,
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Card(
+      color: theme.colorScheme.surface.withOpacity(0.96),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'ゲーム内容',
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            buildRow('捕獲者数', '$capturedPlayersCount人'),
+            buildRow('発電機解除数', '$generatorsClearedCount箇所'),
+            buildRow('ゲーム時間', gameDurationLabel),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: onClose,
+                child: const Text('閉じる'),
+              ),
+            ),
+          ],
         ),
       ),
     );

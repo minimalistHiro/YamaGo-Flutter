@@ -1592,7 +1592,7 @@ class _LandingButton extends StatelessWidget {
 }
 
 class _LandingButtonSound {
-  static const _assetPath = 'sounds/button_sound.mp3';
+  static const _assetPath = 'sounds/button_sound2.mp3';
   static AudioPlayer? _player;
   static bool _isInitialized = false;
 

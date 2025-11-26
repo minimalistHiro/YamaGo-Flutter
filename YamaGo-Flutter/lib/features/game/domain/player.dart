@@ -15,6 +15,7 @@ class Player {
     required this.updatedAt,
     required this.status,
     this.avatarUrl,
+    this.stats = const PlayerStats(),
   });
 
   final String uid;
@@ -25,6 +26,7 @@ class Player {
   final DateTime? updatedAt;
   final PlayerStatus status;
   final String? avatarUrl;
+  final PlayerStats stats;
 
   Player copyWith({
     String? nickname,
@@ -34,6 +36,7 @@ class Player {
     DateTime? updatedAt,
     PlayerStatus? status,
     String? avatarUrl,
+    PlayerStats? stats,
   }) {
     return Player(
       uid: uid,
@@ -44,6 +47,7 @@ class Player {
       updatedAt: updatedAt ?? this.updatedAt,
       status: status ?? this.status,
       avatarUrl: avatarUrl ?? this.avatarUrl,
+      stats: stats ?? this.stats,
     );
   }
 
@@ -70,6 +74,49 @@ class Player {
       updatedAt: updatedAt,
       status: status,
       avatarUrl: data['avatarUrl'] as String?,
+      stats: PlayerStats.fromMap(
+        (data['stats'] as Map<String, dynamic>?),
+      ),
+    );
+  }
+}
+
+class PlayerStats {
+  const PlayerStats({
+    this.captures = 0,
+    this.capturedTimes = 0,
+    this.rescues = 0,
+    this.rescuedTimes = 0,
+  });
+
+  final int captures;
+  final int capturedTimes;
+  final int rescues;
+  final int rescuedTimes;
+
+  PlayerStats copyWith({
+    int? captures,
+    int? capturedTimes,
+    int? rescues,
+    int? rescuedTimes,
+  }) {
+    return PlayerStats(
+      captures: captures ?? this.captures,
+      capturedTimes: capturedTimes ?? this.capturedTimes,
+      rescues: rescues ?? this.rescues,
+      rescuedTimes: rescuedTimes ?? this.rescuedTimes,
+    );
+  }
+
+  static PlayerStats fromMap(Map<String, dynamic>? data) {
+    if (data == null) {
+      return const PlayerStats();
+    }
+    return PlayerStats(
+      captures: (data['captures'] as num?)?.toInt() ?? 0,
+      capturedTimes: (data['capturedTimes'] as num?)?.toInt() ?? 0,
+      rescues: (data['rescues'] as num?)?.toInt() ?? 0,
+      rescuedTimes: (data['rescuedTimes'] as num?)?.toInt() ?? 0,
     );
   }
 }
