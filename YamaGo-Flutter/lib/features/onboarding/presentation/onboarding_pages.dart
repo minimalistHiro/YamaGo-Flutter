@@ -14,6 +14,7 @@ import 'package:yamago_flutter/core/storage/local_profile_store.dart';
 import 'package:yamago_flutter/features/game_shell/presentation/game_shell_page.dart';
 
 import '../application/onboarding_notifier.dart';
+import '../application/startup_cleanup_provider.dart';
 
 class WelcomePage extends ConsumerWidget {
   const WelcomePage({super.key});
@@ -25,6 +26,7 @@ class WelcomePage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final firebaseState = ref.watch(firebaseAppProvider);
     final authState = ref.watch(ensureAnonymousSignInProvider);
+    ref.watch(startupCleanupProvider);
     final initError =
         firebaseState.hasError ? firebaseState.error : authState.error;
     final isLoading = firebaseState.isLoading || authState.isLoading;

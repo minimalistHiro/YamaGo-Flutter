@@ -210,11 +210,6 @@ class _PlayerStatsContent extends StatelessWidget {
         const _HudDivider(),
         const SizedBox(height: 16),
         _HudStatRow(
-          label: 'オンライン',
-          value: '${activePlayers.length}人',
-          color: _cyberGreen,
-        ),
-        _HudStatRow(
           label: '鬼',
           value: '${oniCount}人',
           color: _cyberPink,
