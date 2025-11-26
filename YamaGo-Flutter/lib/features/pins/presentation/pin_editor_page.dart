@@ -3,8 +3,10 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
+import 'package:yamago_flutter/core/location/location_service.dart';
 import 'package:yamago_flutter/core/location/yamanote_constants.dart';
 import 'package:yamago_flutter/features/game/application/player_providers.dart';
 import 'package:yamago_flutter/features/pins/application/pin_providers.dart';
@@ -35,10 +37,30 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
   bool _isSaving = false;
   String? _activePinId;
   String? _errorMessage;
+  LatLng? _latestUserLocation;
+  bool _isLocatingUser = false;
+  bool _isAwaitingInitialLocation = true;
+  ProviderSubscription<AsyncValue<Position>>? _locationSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _locationSubscription = ref.listenManual<AsyncValue<Position>>(
+      locationStreamProvider,
+      (previous, next) {
+        next.whenData((position) {
+          _latestUserLocation = LatLng(position.latitude, position.longitude);
+          _maybeCenterOnUserLocation();
+        });
+      },
+    );
+    unawaited(_attemptInitialUserCenter());
+  }
 
   @override
   void dispose() {
     _mapController?.dispose();
+    _locationSubscription?.close();
     super.dispose();
   }
 
@@ -46,6 +68,8 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
   Widget build(BuildContext context) {
     final pinsState = ref.watch(pinsStreamProvider(widget.gameId));
     final gameState = ref.watch(gameStreamProvider(widget.gameId));
+    final permissionState = ref.watch(locationPermissionStatusProvider);
+    final locationState = ref.watch(locationStreamProvider);
 
     final rawPinCountLimit = gameState.maybeWhen(
       data: (game) => game?.pinCount,
@@ -57,8 +81,8 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
         : rawPinCountLimit.clamp(0, 9999).toInt();
 
     final pins = pinsState.value ?? const <PinPoint>[];
-    pinsState.whenData(_maybeCenterOnPins);
     final displayPins = _resolvedPins(pins, pinCountLimit);
+    _maybeCenterOnPins(pins);
     final activePinIndex =
         _activePinId == null ? -1 : displayPins.indexWhere((p) => p.id == _activePinId);
 
@@ -70,6 +94,14 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
         : (pinCountLimit > pins.length ? pinCountLimit - pins.length : 0);
     final pinLimitResolved = pinCountLimit != null;
     final configuredPinCount = pinCountLimit ?? pins.length;
+    final isLocationPermissionGranted = permissionState.maybeWhen(
+      data: (status) =>
+          status == LocationPermissionStatus.granted ||
+          status == LocationPermissionStatus.limited,
+      orElse: () => false,
+    );
+    final bool isMyLocationButtonEnabled =
+        isLocationPermissionGranted && _mapController != null;
 
     return Scaffold(
       appBar: AppBar(
@@ -96,7 +128,9 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
                   ),
                   onMapCreated: (controller) {
                     _mapController ??= controller;
+                    _maybeCenterOnUserLocation();
                   },
+                  myLocationEnabled: locationState.hasValue,
                   zoomControlsEnabled: false,
                   mapToolbarEnabled: false,
                   myLocationButtonEnabled: false,
@@ -141,6 +175,20 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
                       ),
                     ),
                   ),
+                Positioned(
+                  right: 16,
+                  bottom: 16,
+                  child: SafeArea(
+                    left: false,
+                    top: false,
+                    child: _PinEditorMyLocationButton(
+                      isLoading: _isLocatingUser,
+                      onPressed: (!isMyLocationButtonEnabled || _isLocatingUser)
+                          ? null
+                          : _handleMyLocationButtonPressed,
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -158,8 +206,60 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
     );
   }
 
+  Future<void> _attemptInitialUserCenter() async {
+    try {
+      final status = await ref.read(locationPermissionStatusProvider.future);
+      if (!_hasForegroundPermission(status)) {
+        return;
+      }
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      _latestUserLocation = LatLng(position.latitude, position.longitude);
+      _maybeCenterOnUserLocation();
+    } catch (error) {
+      debugPrint('Failed to obtain initial location: $error');
+    } finally {
+      if (!mounted) {
+        _isAwaitingInitialLocation = false;
+        return;
+      }
+      setState(() {
+        _isAwaitingInitialLocation = false;
+      });
+    }
+  }
+
+  void _maybeCenterOnUserLocation() {
+    if (_hasCenteredOnce) return;
+    final target = _latestUserLocation;
+    if (target == null) return;
+    _cameraTarget = target;
+    final controller = _mapController;
+    if (controller == null) {
+      return;
+    }
+    _hasCenteredOnce = true;
+    unawaited(
+      controller.animateCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(
+            target: target,
+            zoom: 14,
+          ),
+        ),
+      ),
+    );
+  }
+
   void _maybeCenterOnPins(List<PinPoint> pins) {
-    if (_hasCenteredOnce || pins.isEmpty) return;
+    if (_hasCenteredOnce || pins.isEmpty || _isAwaitingInitialLocation) {
+      return;
+    }
+    if (_latestUserLocation != null) {
+      _maybeCenterOnUserLocation();
+      return;
+    }
     _hasCenteredOnce = true;
     final firstPin = pins.first;
     final target = LatLng(firstPin.lat, firstPin.lng);
@@ -214,6 +314,52 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
     return markers;
   }
 
+  Future<void> _handleMyLocationButtonPressed() async {
+    if (_mapController == null || _isLocatingUser) {
+      return;
+    }
+    setState(() {
+      _isLocatingUser = true;
+    });
+    try {
+      final status = await ref.read(locationPermissionStatusProvider.future);
+      if (!_hasForegroundPermission(status)) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('現在地を取得するには位置情報の権限を許可してください。'),
+          ),
+        );
+        return;
+      }
+      LatLng? target = _latestUserLocation;
+      if (target == null) {
+        final position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+        );
+        target = LatLng(position.latitude, position.longitude);
+      }
+      _latestUserLocation = target;
+      _cameraTarget = target;
+      await _mapController?.animateCamera(
+        CameraUpdate.newLatLng(target),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('現在地の取得に失敗しました: $error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLocatingUser = false;
+        });
+      } else {
+        _isLocatingUser = false;
+      }
+    }
+  }
+
   void _handleDragStart(String pinId) {
     setState(() {
       _activePinId = pinId;
@@ -258,6 +404,11 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
         _activePinId = null;
       });
     }
+  }
+
+  bool _hasForegroundPermission(LocationPermissionStatus status) {
+    return status == LocationPermissionStatus.granted ||
+        status == LocationPermissionStatus.limited;
   }
 }
 
@@ -476,6 +627,34 @@ class _PinEditorInfoPanel extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _PinEditorMyLocationButton extends StatelessWidget {
+  const _PinEditorMyLocationButton({
+    required this.onPressed,
+    required this.isLoading,
+  });
+
+  final VoidCallback? onPressed;
+  final bool isLoading;
+
+  @override
+  Widget build(BuildContext context) {
+    return FloatingActionButton.small(
+      heroTag: 'pin-editor-my-location',
+      onPressed: isLoading ? null : onPressed,
+      child: isLoading
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
+            )
+          : const Icon(Icons.my_location),
     );
   }
 }
