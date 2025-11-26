@@ -35,6 +35,7 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
   static const _defaultKillerDetectRunner = 500;
   static const _defaultKillerSeeGenerator = 3000;
   static const _defaultCountdownSeconds = 900;
+  static const _defaultGeneratorClearSeconds = 180;
   static const _defaultGameDurationMinutes = 120;
 
   bool _formInitialized = false;
@@ -46,6 +47,8 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
   double _killerDetectRunner = _defaultKillerDetectRunner.toDouble();
   double _killerSeeGenerator = _defaultKillerSeeGenerator.toDouble();
   double _gameDurationMinutes = _defaultGameDurationMinutes.toDouble();
+  double _generatorClearDurationSeconds =
+      _defaultGeneratorClearSeconds.toDouble();
   int _countdownMinutes = _defaultCountdownSeconds ~/ 60;
   int _countdownSeconds = _defaultCountdownSeconds % 60;
   int? _initialPinCount;
@@ -172,6 +175,8 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
                       description: '鬼のマップに逃走者が表示される最大距離です。',
                     ),
                     const SizedBox(height: 16),
+                    _buildGeneratorClearDurationCard(),
+                    const SizedBox(height: 16),
                     _buildCountdownCard(),
                     const SizedBox(height: 16),
                     _buildSaveButton(context),
@@ -229,6 +234,10 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
                 .clamp(100, 10000)
                 .toDouble();
         _gameDurationMinutes = gameDurationMinutes;
+        _generatorClearDurationSeconds =
+            (game.generatorClearDurationSec ?? _defaultGeneratorClearSeconds)
+                .clamp(10, 600)
+                .toDouble();
         _countdownMinutes = countdownSeconds ~/ 60;
         _countdownSeconds = countdownSeconds % 60;
         _formInitialized = true;
@@ -320,6 +329,51 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
             const Text(
               'ゲーム開始から終了までの制限時間です。'
               '10分〜8時間の範囲で指定できます（推奨: 120分）。',
+              style: TextStyle(fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGeneratorClearDurationCard() {
+    final seconds = _generatorClearDurationSeconds.toInt();
+    final formatted = _formatShortDuration(seconds);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '発電所解除時間',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            Text('解除に必要な時間: $formatted'),
+            Slider(
+              min: 10,
+              max: 600,
+              divisions: 590,
+              label: formatted,
+              value: _generatorClearDurationSeconds,
+              onChanged: _isSaving
+                  ? null
+                  : (value) =>
+                      setState(() => _generatorClearDurationSeconds = value),
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: const [
+                Text('10秒'),
+                Text('10分'),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              '逃走者が発電所を解除する際のカウントダウン時間です。'
+              '10秒〜10分の範囲で設定できます（推奨: 3分）。',
               style: TextStyle(fontSize: 12),
             ),
           ],
@@ -542,6 +596,8 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
         pinCount: newPinCount,
         countdownDurationSec: _countdownMinutes * 60 + _countdownSeconds,
         gameDurationSec: _gameDurationMinutes.toInt() * 60,
+        generatorClearDurationSec:
+            _generatorClearDurationSeconds.clamp(10, 600).toInt(),
       );
       await repo.updateGameSettings(gameId: widget.gameId, settings: settings);
       if (pinCountChanged) {
@@ -588,6 +644,18 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
       return km % 1 == 0 ? '${km.toInt()}km' : '${km.toStringAsFixed(1)}km';
     }
     return '${meters}m';
+  }
+
+  String _formatShortDuration(int seconds) {
+    final minutes = seconds ~/ 60;
+    final secs = seconds % 60;
+    if (minutes <= 0) {
+      return '${secs}秒';
+    }
+    if (secs == 0) {
+      return '${minutes}分';
+    }
+    return '${minutes}分${secs}秒';
   }
 
   Widget _buildAppBarAvatar(

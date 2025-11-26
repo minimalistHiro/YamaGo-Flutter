@@ -29,6 +29,7 @@ class GameRepository {
       pinCount: 10,
       countdownDurationSec: 900,
       gameDurationSec: 7200,
+      generatorClearDurationSec: 180,
     );
     await docRef.set({
       'status': 'pending',
@@ -204,6 +205,7 @@ class GameSettingsInput {
     required this.pinCount,
     required this.countdownDurationSec,
     required this.gameDurationSec,
+    required this.generatorClearDurationSec,
   });
 
   final int captureRadiusM;
@@ -215,6 +217,7 @@ class GameSettingsInput {
   final int pinCount;
   final int countdownDurationSec;
   final int gameDurationSec;
+  final int generatorClearDurationSec;
 
   Map<String, dynamic> toMap() {
     return {
@@ -227,6 +230,7 @@ class GameSettingsInput {
       'pinCount': pinCount,
       'countdownDurationSec': countdownDurationSec,
       'gameDurationSec': gameDurationSec,
+      'generatorClearDurationSec': generatorClearDurationSec,
     };
   }
 }

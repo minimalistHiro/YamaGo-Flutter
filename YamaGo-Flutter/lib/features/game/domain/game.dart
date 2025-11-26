@@ -10,6 +10,7 @@ class Game {
     this.startAt,
     this.countdownStartAt,
     this.countdownDurationSec,
+    this.generatorClearDurationSec,
     this.pinCount,
     this.captureRadiusM,
     this.runnerSeeKillerRadiusM,
@@ -26,6 +27,7 @@ class Game {
   final DateTime? startAt;
   final DateTime? countdownStartAt;
   final int? countdownDurationSec;
+  final int? generatorClearDurationSec;
   final int? pinCount;
   final int? captureRadiusM;
   final int? runnerSeeKillerRadiusM;
@@ -74,6 +76,8 @@ class Game {
       startAt: _toDate(data['startAt']),
       countdownStartAt: _toDate(data['countdownStartAt']),
       countdownDurationSec: (data['countdownDurationSec'] as num?)?.toInt(),
+      generatorClearDurationSec:
+          (data['generatorClearDurationSec'] as num?)?.toInt(),
       pinCount: (data['pinCount'] as num?)?.toInt(),
       captureRadiusM: (data['captureRadiusM'] as num?)?.toInt(),
       runnerSeeKillerRadiusM: (data['runnerSeeKillerRadiusM'] as num?)?.toInt(),

@@ -162,8 +162,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   String? _captureAlertMessage;
   bool _hasSeededGameEvents = false;
   bool _hasSeededClearedPins = false;
-  static const int _pinClearDurationSeconds = 10;
+  static const int _defaultPinClearDurationSeconds = 180;
+  static const int _minPinClearDurationSeconds = 10;
+  static const int _maxPinClearDurationSeconds = 600;
   static const int _oniClearingAlertDurationSeconds = 5;
+  int _pinClearDurationSeconds = _defaultPinClearDurationSeconds;
   Timer? _pinClearTimer;
   int? _pinClearRemainingSeconds;
   String? _activeClearingPinId;
@@ -268,6 +271,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
 
     final previousGameStatus = _latestGameStatus;
     final game = gameState.valueOrNull;
+    _updatePinClearDuration(game);
     final captureRadius = game?.captureRadiusM?.toDouble();
     _latestCaptureRadiusMeters = captureRadius;
     var currentPlayer = currentPlayerState?.valueOrNull;
@@ -1235,6 +1239,21 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         ),
       );
     });
+  }
+
+  void _updatePinClearDuration(Game? game) {
+    final rawSeconds = game?.generatorClearDurationSec;
+    final sanitized = (rawSeconds ?? _defaultPinClearDurationSeconds)
+        .clamp(_minPinClearDurationSeconds, _maxPinClearDurationSeconds)
+        .toInt();
+    if (_pinClearDurationSeconds == sanitized) {
+      return;
+    }
+    _pinClearDurationSeconds = sanitized;
+    if (_isClearingPin && _pinClearRemainingSeconds != null) {
+      _pinClearRemainingSeconds =
+          _pinClearRemainingSeconds!.clamp(0, sanitized).toInt();
+    }
   }
 
   void _showSnackBar(String message) {
@@ -4030,7 +4049,8 @@ class _GeneratorClearingCountdownAlert extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final clampedSeconds = remainingSeconds.clamp(0, 999);
+    final clampedSeconds = remainingSeconds.clamp(0, 999).toInt();
+    final formattedDuration = _formatRemainingLabel(clampedSeconds);
     return Material(
       borderRadius: BorderRadius.circular(24),
       elevation: 16,
@@ -4070,7 +4090,7 @@ class _GeneratorClearingCountdownAlert extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              '解除完了まで残り${clampedSeconds}秒',
+              '解除完了まで残り$formattedDuration',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyLarge?.copyWith(
                 color: Colors.white,
@@ -4089,6 +4109,16 @@ class _GeneratorClearingCountdownAlert extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _formatRemainingLabel(int seconds) {
+    final minutes = seconds ~/ 60;
+    final secs = seconds % 60;
+    if (minutes <= 0) {
+      return '${secs}秒';
+    }
+    final paddedSecs = secs.toString().padLeft(2, '0');
+    return '${minutes}分${paddedSecs}秒';
   }
 }
 
