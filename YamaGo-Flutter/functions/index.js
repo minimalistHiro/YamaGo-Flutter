@@ -10,10 +10,16 @@ const CHAT_CHANNELS = {
   messages_oni: {
     role: 'oni',
     title: '鬼チャット',
+    targetRole: 'oni',
   },
   messages_runner: {
     role: 'runner',
     title: '逃走者チャット',
+    targetRole: 'runner',
+  },
+  messages_general: {
+    role: 'general',
+    title: '総合チャット',
   },
 };
 
@@ -45,6 +51,10 @@ const SUBCOLLECTION_ACTIVITY_FIELDS = [
     name: 'messages_runner',
     orderFields: ['timestamp'],
   },
+  {
+    name: 'messages_general',
+    orderFields: ['timestamp'],
+  },
 ];
 
 exports.onChatMessageCreated = functions
@@ -72,12 +82,14 @@ exports.onChatMessageCreated = functions
     const sanitizedMessage = rawMessage.replace(/\s+/g, ' ').slice(0, 120);
 
     try {
-      const playersSnap = await db
+      let playersQuery = db
         .collection('games')
         .doc(gameId)
-        .collection('players')
-        .where('role', '==', channelMeta.role)
-        .get();
+        .collection('players');
+      if (channelMeta.targetRole) {
+        playersQuery = playersQuery.where('role', '==', channelMeta.targetRole);
+      }
+      const playersSnap = await playersQuery.get();
 
       if (playersSnap.empty) {
         return null;

@@ -1,6 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-enum ChatRole { oni, runner }
+enum ChatChannel { oni, runner, general }
 
 class ChatMessage {
   const ChatMessage({
@@ -9,7 +9,7 @@ class ChatMessage {
     required this.nickname,
     required this.message,
     required this.timestamp,
-    required this.role,
+    required this.channel,
   });
 
   final String id;
@@ -17,11 +17,11 @@ class ChatMessage {
   final String nickname;
   final String message;
   final DateTime timestamp;
-  final ChatRole role;
+  final ChatChannel channel;
 
   static ChatMessage fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> doc, {
-    required ChatRole role,
+    required ChatChannel channel,
   }) {
     final data = doc.data() ?? {};
     return ChatMessage(
@@ -30,7 +30,7 @@ class ChatMessage {
       nickname: data['nickname'] as String? ?? 'No name',
       message: data['message'] as String? ?? '',
       timestamp: _toDate(data['timestamp']) ?? DateTime.now(),
-      role: role,
+      channel: channel,
     );
   }
 }

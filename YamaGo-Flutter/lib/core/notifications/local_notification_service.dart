@@ -2,8 +2,8 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 const String _chatChannelId = 'chat_messages';
-const String _chatChannelName = 'チームチャット';
-const String _chatChannelDescription = '同じチームの新着チャットを通知します。';
+const String _chatChannelName = 'チャット通知';
+const String _chatChannelDescription = 'チームチャットと総合チャットの新着メッセージを通知します。';
 const String _mapEventChannelId = 'map_events';
 const String _mapEventChannelName = 'マップイベント';
 const String _mapEventChannelDescription = 'マップ上の捕獲や発電所解除、ゲーム終了などを通知します。';

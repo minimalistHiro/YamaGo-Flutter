@@ -569,9 +569,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
           distanceMeters: clearButtonDistance,
           isLoading: _isClearingPin,
           countdownSeconds: _pinClearRemainingSeconds,
-          onPressed: isPopupVisible
-              ? null
-              : () => _handleClearPinPressed(nearbyPin),
+          onPressed:
+              isPopupVisible ? null : () => _handleClearPinPressed(nearbyPin),
         ),
       );
     }
@@ -2876,6 +2875,7 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
     );
 
     final playersState = ref.watch(playersStreamProvider(widget.gameId));
+    final gameState = ref.watch(gameStreamProvider(widget.gameId));
     final playersByUid = {
       for (final player in playersState.valueOrNull ?? const <Player>[])
         player.uid: player,
@@ -2898,10 +2898,26 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
           if (player == null) {
             return const Center(child: Text('プレイヤー情報が見つかりません'));
           }
-          final palette = _ChatPalette.fromRole(player.role);
+          final status = gameState.value?.status;
+          final isTeamChat = status == null ||
+              status == GameStatus.countdown ||
+              status == GameStatus.running;
+          final chatChannel = isTeamChat
+              ? (player.role == PlayerRole.oni
+                  ? ChatChannel.oni
+                  : ChatChannel.runner)
+              : ChatChannel.general;
+          final palette = _ChatPalette.fromContext(
+            role: player.role,
+            channel: chatChannel,
+          );
+          final headerTitle = isTeamChat
+              ? (player.role == PlayerRole.oni ? '鬼チャット' : '逃走者チャット')
+              : '総合チャット';
+          final headerEyebrow = isTeamChat ? 'TEAM CHANNEL' : 'GLOBAL CHANNEL';
           final chatState = ref.watch(
-            chatMessagesProvider(
-              (gameId: widget.gameId, role: player.role),
+            chatMessagesByChannelProvider(
+              (gameId: widget.gameId, channel: chatChannel),
             ),
           );
 
@@ -2916,9 +2932,8 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
                       SafeArea(
                         bottom: false,
                         child: _ChatHeader(
-                          title: player.role == PlayerRole.oni
-                              ? '鬼チャット'
-                              : '逃走者チャット',
+                          title: headerTitle,
+                          eyebrow: headerEyebrow,
                           palette: palette,
                         ),
                       ),
@@ -2975,8 +2990,8 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
                 controller: _controller,
                 sending: _sending,
                 palette: palette,
-                role: player.role,
-                onSendRequested: () => _sendMessage(context, player),
+                onSendRequested: () =>
+                    _sendMessage(context, player, chatChannel),
               ),
             ],
           );
@@ -3015,7 +3030,11 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
     FocusManager.instance.primaryFocus?.unfocus();
   }
 
-  Future<void> _sendMessage(BuildContext context, Player player) async {
+  Future<void> _sendMessage(
+    BuildContext context,
+    Player player,
+    ChatChannel channel,
+  ) async {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
     setState(() {
@@ -3028,7 +3047,7 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
       if (user == null) return;
       await repo.sendMessage(
         gameId: widget.gameId,
-        role: player.role == PlayerRole.oni ? ChatRole.oni : ChatRole.runner,
+        channel: channel,
         uid: user.uid,
         nickname: player.nickname,
         message: text,
@@ -3180,10 +3199,12 @@ class _MessagesListView extends StatelessWidget {
 class _ChatHeader extends StatelessWidget {
   const _ChatHeader({
     required this.title,
+    required this.eyebrow,
     required this.palette,
   });
 
   final String title;
+  final String eyebrow;
   final _ChatPalette palette;
 
   @override
@@ -3215,7 +3236,7 @@ class _ChatHeader extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'TEAM CHANNEL',
+            eyebrow,
             style: TextStyle(
               color: Colors.white.withOpacity(0.7),
               letterSpacing: 4,
@@ -3289,14 +3310,12 @@ class _ChatComposer extends StatelessWidget {
     required this.controller,
     required this.sending,
     required this.palette,
-    required this.role,
     required this.onSendRequested,
   });
 
   final TextEditingController controller;
   final bool sending;
   final _ChatPalette palette;
-  final PlayerRole role;
   final VoidCallback onSendRequested;
 
   @override
@@ -3496,54 +3515,87 @@ class _ChatPalette {
   final Color otherBubbleColor;
   final Color shadowColor;
 
-  static _ChatPalette fromRole(PlayerRole role) {
-    if (role == PlayerRole.oni) {
-      return const _ChatPalette(
-        headerGradient: [
-          Color(0xFFFF47C2),
-          Color(0xFF8A1FBD),
-          Color(0xFFFF47C2),
-        ],
-        mineBubbleGradient: LinearGradient(
-          colors: [
-            Color(0xFFFF47C2),
-            Color(0xFF8A1FBD),
-          ],
-        ),
-        buttonGradient: [
-          Color(0xFFFF47C2),
-          Color(0xFF8A1FBD),
-        ],
-        accentColor: Color(0xFFFF47C2),
-        bodyText: Color(0xFFE6F4F1),
-        mutedText: Color(0xFF6B9DA2),
-        otherBubbleColor: Color(0xFF03161B),
-        shadowColor: Color(0xAA8A1FBD),
-      );
-    }
+  static const _ChatPalette _oniPalette = _ChatPalette(
+    headerGradient: [
+      Color(0xFFFF47C2),
+      Color(0xFF8A1FBD),
+      Color(0xFFFF47C2),
+    ],
+    mineBubbleGradient: LinearGradient(
+      colors: [
+        Color(0xFFFF47C2),
+        Color(0xFF8A1FBD),
+      ],
+    ),
+    buttonGradient: [
+      Color(0xFFFF47C2),
+      Color(0xFF8A1FBD),
+    ],
+    accentColor: Color(0xFFFF47C2),
+    bodyText: Color(0xFFE6F4F1),
+    mutedText: Color(0xFF6B9DA2),
+    otherBubbleColor: Color(0xFF03161B),
+    shadowColor: Color(0xAA8A1FBD),
+  );
 
-    return const _ChatPalette(
-      headerGradient: [
-        Color(0xFF22B59B),
-        Color(0xFF5FFBF1),
-        Color(0xFF22B59B),
-      ],
-      mineBubbleGradient: LinearGradient(
-        colors: [
-          Color(0xFF22B59B),
-          Color(0xFF5FFBF1),
-        ],
-      ),
-      buttonGradient: [
+  static const _ChatPalette _runnerPalette = _ChatPalette(
+    headerGradient: [
+      Color(0xFF22B59B),
+      Color(0xFF5FFBF1),
+      Color(0xFF22B59B),
+    ],
+    mineBubbleGradient: LinearGradient(
+      colors: [
         Color(0xFF22B59B),
         Color(0xFF5FFBF1),
       ],
-      accentColor: Color(0xFF22B59B),
-      bodyText: Color(0xFFE6F4F1),
-      mutedText: Color(0xFF6B9DA2),
-      otherBubbleColor: Color(0xFF03161B),
-      shadowColor: Color(0x6622B59B),
-    );
+    ),
+    buttonGradient: [
+      Color(0xFF22B59B),
+      Color(0xFF5FFBF1),
+    ],
+    accentColor: Color(0xFF22B59B),
+    bodyText: Color(0xFFE6F4F1),
+    mutedText: Color(0xFF6B9DA2),
+    otherBubbleColor: Color(0xFF03161B),
+    shadowColor: Color(0x6622B59B),
+  );
+
+  static const _ChatPalette _generalPalette = _ChatPalette(
+    headerGradient: [
+      Color(0xFF0D47A1),
+      Color(0xFF1976D2),
+      Color(0xFF42A5F5),
+    ],
+    mineBubbleGradient: LinearGradient(
+      colors: [
+        Color(0xFF1E88E5),
+        Color(0xFF64B5F6),
+      ],
+    ),
+    buttonGradient: [
+      Color(0xFF0D47A1),
+      Color(0xFF42A5F5),
+    ],
+    accentColor: Color(0xFF42A5F5),
+    bodyText: Color(0xFFE3F2FD),
+    mutedText: Color(0xFF8EA6C1),
+    otherBubbleColor: Color(0xFF03161B),
+    shadowColor: Color(0x552264B8),
+  );
+
+  static _ChatPalette fromContext({
+    required PlayerRole role,
+    required ChatChannel channel,
+  }) {
+    switch (channel) {
+      case ChatChannel.oni:
+        return _oniPalette;
+      case ChatChannel.runner:
+        return _runnerPalette;
+      case ChatChannel.general:
+        return _generalPalette;
+    }
   }
 }
 
@@ -4506,8 +4558,7 @@ class _MapStartGameButtonState extends ConsumerState<_MapStartGameButton> {
               borderRadius: BorderRadius.circular(32),
             ),
           ),
-          onPressed:
-              (_isStarting || widget.isLocked) ? null : _handlePressed,
+          onPressed: (_isStarting || widget.isLocked) ? null : _handlePressed,
           child: _isStarting
               ? const SizedBox(
                   width: 20,

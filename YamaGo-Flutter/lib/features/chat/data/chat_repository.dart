@@ -11,34 +11,49 @@ class ChatRepository {
 
   CollectionReference<Map<String, dynamic>> _messagesCollection(
     String gameId,
-    ChatRole role,
+    ChatChannel channel,
   ) {
-    final roleKey = role == ChatRole.oni ? 'messages_oni' : 'messages_runner';
-    return _firestore.collection('games').doc(gameId).collection(roleKey);
+    final collectionKey = switch (channel) {
+      ChatChannel.oni => 'messages_oni',
+      ChatChannel.runner => 'messages_runner',
+      ChatChannel.general => 'messages_general',
+    };
+    return _firestore.collection('games').doc(gameId).collection(collectionKey);
   }
 
-  Stream<List<ChatMessage>> watchMessages(String gameId, ChatRole role) {
-    return _messagesCollection(gameId, role)
+  Stream<List<ChatMessage>> watchMessages(String gameId, ChatChannel channel) {
+    return _messagesCollection(gameId, channel)
         .orderBy('timestamp', descending: false)
         .snapshots()
         .map((snapshot) => snapshot.docs
-            .map((doc) => ChatMessage.fromFirestore(doc, role: role))
+            .map(
+              (doc) => ChatMessage.fromFirestore(
+                doc,
+                channel: channel,
+              ),
+            )
             .toList());
   }
 
   Future<void> sendMessage({
     required String gameId,
-    required ChatRole role,
+    required ChatChannel channel,
     required String uid,
     required String nickname,
     required String message,
   }) {
-    return _messagesCollection(gameId, role).add({
+    final roleValue = switch (channel) {
+      ChatChannel.oni => 'oni',
+      ChatChannel.runner => 'runner',
+      ChatChannel.general => 'general',
+    };
+    return _messagesCollection(gameId, channel).add({
       'uid': uid,
       'nickname': nickname,
       'message': message,
       'timestamp': FieldValue.serverTimestamp(),
-      'role': role == ChatRole.oni ? 'oni' : 'runner',
+      'role': roleValue,
+      'channel': roleValue,
       'type': 'user',
     });
   }
