@@ -13,12 +13,14 @@ class PlayerListCard extends ConsumerWidget {
     required this.canManage,
     required this.ownerUid,
     required this.currentUid,
+    required this.roleEditingLocked,
   });
 
   final String gameId;
   final bool canManage;
   final String ownerUid;
   final String currentUid;
+  final bool roleEditingLocked;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -53,6 +55,7 @@ class PlayerListCard extends ConsumerWidget {
                   canManage: canManage,
                   ownerUid: ownerUid,
                   currentUid: currentUid,
+                  roleEditingLocked: roleEditingLocked,
                 ),
               ),
             ],
@@ -82,6 +85,7 @@ class _PlayerListTile extends ConsumerWidget {
     required this.canManage,
     required this.ownerUid,
     required this.currentUid,
+    required this.roleEditingLocked,
   });
 
   final Player player;
@@ -89,6 +93,7 @@ class _PlayerListTile extends ConsumerWidget {
   final bool canManage;
   final String ownerUid;
   final String currentUid;
+  final bool roleEditingLocked;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -127,6 +132,16 @@ class _PlayerListTile extends ConsumerWidget {
               onSelected: (value) async {
                 switch (value) {
                   case 'toggleRole':
+                    if (roleEditingLocked) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('ゲーム開始後は役職を変更できません'),
+                          ),
+                        );
+                      }
+                      return;
+                    }
                     final newRole = player.role == PlayerRole.oni
                         ? PlayerRole.runner
                         : PlayerRole.oni;
@@ -181,6 +196,7 @@ class _PlayerListTile extends ConsumerWidget {
               itemBuilder: (context) => [
                 PopupMenuItem(
                   value: 'toggleRole',
+                  enabled: !roleEditingLocked,
                   child: Text(
                     player.role == PlayerRole.oni ? '逃走者に変更' : '鬼に変更',
                   ),

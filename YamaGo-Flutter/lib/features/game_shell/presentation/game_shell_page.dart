@@ -511,12 +511,31 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
         _isOniClearingAlertVisible &&
         currentPlayer?.role == PlayerRole.oni &&
         _oniClearingPinId != null;
+    final bool showGeneratorClearedOverlay =
+        isGameRunning && _showGeneratorClearedAlert && playerRole != null;
+    final bool showRescueAlert =
+        isGameRunning && _showRescueAlert && _rescueAlertMessage != null;
+    final bool showCaptureAlert =
+        isGameRunning && _showCaptureAlert && _captureAlertMessage != null;
+    final bool isPermissionDialogVisible =
+        permissionOverlay is _BackgroundPermissionDialog;
+    final bool isPopupVisible = isPermissionDialogVisible ||
+        countdownOverlay != null ||
+        showGeneratorClearedOverlay ||
+        showRunnerClearingOverlay ||
+        showOniClearingOverlay ||
+        showRescueAlert ||
+        showCaptureAlert ||
+        _showGameEndPopup ||
+        _showGameSummaryPopup;
+
     final actionButtons = <Widget>[];
     if (showStartButton) {
       actionButtons.add(
         _MapStartGameButton(
           gameId: widget.gameId,
           countdownSeconds: countdownSeconds,
+          isLocked: isPopupVisible,
         ),
       );
     }
@@ -526,8 +545,9 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
           targetName: captureTarget.nickname,
           distanceMeters: captureTargetDistance,
           isLoading: _isCapturing,
-          onPressed:
-              _isCapturing ? null : () => _handleCapturePressed(captureTarget),
+          onPressed: (_isCapturing || isPopupVisible)
+              ? null
+              : () => _handleCapturePressed(captureTarget),
         ),
       );
     }
@@ -537,8 +557,9 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
           targetName: rescueTarget.nickname,
           distanceMeters: rescueTargetDistance,
           isLoading: _isRescuing,
-          onPressed:
-              _isRescuing ? null : () => _handleRescuePressed(rescueTarget),
+          onPressed: (_isRescuing || isPopupVisible)
+              ? null
+              : () => _handleRescuePressed(rescueTarget),
         ),
       );
     }
@@ -548,7 +569,9 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
           distanceMeters: clearButtonDistance,
           isLoading: _isClearingPin,
           countdownSeconds: _pinClearRemainingSeconds,
-          onPressed: () => _handleClearPinPressed(nearbyPin),
+          onPressed: isPopupVisible
+              ? null
+              : () => _handleClearPinPressed(nearbyPin),
         ),
       );
     }
@@ -637,7 +660,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
         ),
         if (permissionOverlay != null) permissionOverlay,
         if (countdownOverlay != null) countdownOverlay,
-        if (isGameRunning && _showGeneratorClearedAlert && playerRole != null)
+        if (showGeneratorClearedOverlay)
           Positioned.fill(
             child: Container(
               color: Colors.black54,
@@ -681,7 +704,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
               ),
             ),
           ),
-        if (isGameRunning && _showRescueAlert && _rescueAlertMessage != null)
+        if (showRescueAlert)
           Positioned.fill(
             child: Container(
               color: Colors.black54,
@@ -697,7 +720,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
               ),
             ),
           ),
-        if (isGameRunning && _showCaptureAlert && _captureAlertMessage != null)
+        if (showCaptureAlert)
           Positioned.fill(
             child: Container(
               color: Colors.black54,
@@ -772,7 +795,9 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
             minimum: const EdgeInsets.only(bottom: 16),
             child: _MapMyLocationButton(
               isLoading: _isLocatingUser,
-              onPressed: (!isMyLocationButtonEnabled || _isLocatingUser)
+              onPressed: (!isMyLocationButtonEnabled ||
+                      _isLocatingUser ||
+                      isPopupVisible)
                   ? null
                   : _handleMyLocationButtonPressed,
             ),
@@ -2373,13 +2398,13 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
             children: [
               Text(
                 formattedTime,
-                style: theme.textTheme.displayMedium?.copyWith(
+                style: theme.textTheme.displayLarge?.copyWith(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 2,
                     ) ??
                     const TextStyle(
-                      fontSize: 64,
+                      fontSize: 80,
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 2,
@@ -3549,6 +3574,10 @@ class GameSettingsSection extends ConsumerWidget {
               data: (game) => game?.ownerUid == player.uid,
               orElse: () => false,
             );
+            final gameStatus = gameState.value?.status;
+            final roleEditingLocked = gameStatus == GameStatus.countdown ||
+                gameStatus == GameStatus.running;
+            final pinEditingLocked = roleEditingLocked;
             return ListView(
               children: [
                 PlayerProfileCard(
@@ -3565,6 +3594,7 @@ class GameSettingsSection extends ConsumerWidget {
                   canManage: canManage,
                   ownerUid: gameState.value?.ownerUid ?? '',
                   currentUid: user.uid,
+                  roleEditingLocked: roleEditingLocked,
                 ),
                 if (canManage) ...[
                   const SizedBox(height: 16),
@@ -3588,15 +3618,22 @@ class GameSettingsSection extends ConsumerWidget {
                     child: ListTile(
                       leading: const Icon(Icons.swap_horiz),
                       title: const Text('役職振り分け'),
-                      subtitle: const Text('鬼/逃走者の人数と役割を整理・ランダム振り分け'),
+                      subtitle: Text(
+                        roleEditingLocked
+                            ? 'カウントダウン・進行中は役職を変更できません'
+                            : '鬼/逃走者の人数と役割を整理・ランダム振り分け',
+                      ),
                       trailing: const Icon(Icons.chevron_right),
-                      onTap: () {
-                        FocusScope.of(context).unfocus();
-                        context.pushNamed(
-                          RoleAssignmentPage.routeName,
-                          pathParameters: {'gameId': gameId},
-                        );
-                      },
+                      enabled: !roleEditingLocked,
+                      onTap: roleEditingLocked
+                          ? null
+                          : () {
+                              FocusScope.of(context).unfocus();
+                              context.pushNamed(
+                                RoleAssignmentPage.routeName,
+                                pathParameters: {'gameId': gameId},
+                              );
+                            },
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -3604,12 +3641,19 @@ class GameSettingsSection extends ConsumerWidget {
                     child: ListTile(
                       leading: const Icon(Icons.edit_location_alt_outlined),
                       title: const Text('発電所ピンを直接編集'),
-                      subtitle: const Text('ドラッグ&ドロップで集合地点を微調整できます'),
+                      subtitle: Text(
+                        pinEditingLocked
+                            ? 'カウントダウン・進行中は発電所ピンを編集できません'
+                            : 'ドラッグ&ドロップで集合地点を微調整できます',
+                      ),
                       trailing: const Icon(Icons.chevron_right),
-                      onTap: () {
-                        FocusScope.of(context).unfocus();
-                        context.push(PinEditorPage.path(gameId));
-                      },
+                      enabled: !pinEditingLocked,
+                      onTap: pinEditingLocked
+                          ? null
+                          : () {
+                              FocusScope.of(context).unfocus();
+                              context.push(PinEditorPage.path(gameId));
+                            },
                     ),
                   ),
                 ],
@@ -3642,10 +3686,12 @@ class _MapStartGameButton extends ConsumerStatefulWidget {
   const _MapStartGameButton({
     required this.gameId,
     required this.countdownSeconds,
+    this.isLocked = false,
   });
 
   final String gameId;
   final int countdownSeconds;
+  final bool isLocked;
 
   @override
   ConsumerState<_MapStartGameButton> createState() =>
@@ -4457,7 +4503,8 @@ class _MapStartGameButtonState extends ConsumerState<_MapStartGameButton> {
               borderRadius: BorderRadius.circular(32),
             ),
           ),
-          onPressed: _isStarting ? null : _handlePressed,
+          onPressed:
+              (_isStarting || widget.isLocked) ? null : _handlePressed,
           child: _isStarting
               ? const SizedBox(
                   width: 20,
