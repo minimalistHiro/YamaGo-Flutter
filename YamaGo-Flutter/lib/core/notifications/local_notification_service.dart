@@ -4,6 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 const String _chatChannelId = 'chat_messages';
 const String _chatChannelName = 'チームチャット';
 const String _chatChannelDescription = '同じチームの新着チャットを通知します。';
+const String _mapEventChannelId = 'map_events';
+const String _mapEventChannelName = 'マップイベント';
+const String _mapEventChannelDescription = 'マップ上の捕獲や発電所解除、ゲーム終了などを通知します。';
 
 class LocalNotificationService {
   LocalNotificationService() : _plugin = FlutterLocalNotificationsPlugin();
@@ -87,6 +90,44 @@ class LocalNotificationService {
     final notificationId = messageId.hashCode & 0x7fffffff;
     await _plugin.show(
       notificationId,
+      title,
+      body,
+      notificationDetails,
+    );
+  }
+
+  Future<void> showMapEventNotification({
+    required String notificationId,
+    required String title,
+    required String body,
+  }) async {
+    await initialize();
+
+    final notificationDetails = NotificationDetails(
+      android: AndroidNotificationDetails(
+        _mapEventChannelId,
+        _mapEventChannelName,
+        channelDescription: _mapEventChannelDescription,
+        importance: Importance.high,
+        priority: Priority.high,
+        visibility: NotificationVisibility.public,
+        styleInformation: BigTextStyleInformation(body),
+      ),
+      iOS: const DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: false,
+        presentSound: true,
+      ),
+      macOS: const DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: false,
+        presentSound: true,
+      ),
+    );
+
+    final notificationHash = notificationId.hashCode & 0x7fffffff;
+    await _plugin.show(
+      notificationHash,
       title,
       body,
       notificationDetails,

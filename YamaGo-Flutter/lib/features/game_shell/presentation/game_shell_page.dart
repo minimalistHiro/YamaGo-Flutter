@@ -11,6 +11,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:yamago_flutter/core/location/location_service.dart';
 import 'package:yamago_flutter/core/location/yamanote_constants.dart';
+import 'package:yamago_flutter/core/notifications/local_notification_service.dart';
 import 'package:yamago_flutter/core/notifications/push_notification_service.dart';
 import 'package:yamago_flutter/core/services/firebase_providers.dart';
 import 'package:yamago_flutter/features/auth/application/auth_providers.dart';
@@ -199,7 +200,8 @@ class GameMapSection extends ConsumerStatefulWidget {
   ConsumerState<GameMapSection> createState() => _GameMapSectionState();
 }
 
-class _GameMapSectionState extends ConsumerState<GameMapSection> {
+class _GameMapSectionState extends ConsumerState<GameMapSection>
+    with WidgetsBindingObserver {
   GoogleMapController? _mapController;
   LatLng _cameraTarget = yamanoteCenter;
   static const double _initialMapZoom = 13.5;
@@ -256,10 +258,17 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   AudioPlayer? _kodouPlayer;
   bool _shouldPlayKodouSound = false;
   bool _isKodouPlaying = false;
+  bool _isAppInForeground = true;
 
   @override
   void initState() {
     super.initState();
+    final binding = WidgetsBinding.instance;
+    binding.addObserver(this);
+    final lifecycleState = binding.lifecycleState;
+    if (lifecycleState != null) {
+      _isAppInForeground = lifecycleState == AppLifecycleState.resumed;
+    }
     _pinsSubscription = ref.listenManual<AsyncValue<List<PinPoint>>>(
       pinsStreamProvider(widget.gameId),
       (previous, next) {
@@ -294,6 +303,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _statusTicker?.cancel();
     _pinClearTimer?.cancel();
     _oniClearingAlertTimer?.cancel();
@@ -307,6 +317,27 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       kodouPlayer.dispose();
     }
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _isAppInForeground = state == AppLifecycleState.resumed;
+  }
+
+  void _maybeNotifyMapPopup({
+    required String notificationId,
+    required String title,
+    required String body,
+  }) {
+    if (_isAppInForeground) return;
+    final service = ref.read(localNotificationServiceProvider);
+    unawaited(
+      service.showMapEventNotification(
+        notificationId: notificationId,
+        title: title,
+        body: body,
+      ),
+    );
   }
 
   @override
@@ -800,14 +831,21 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     if (currentStatus == GameStatus.ended &&
         previousStatus != GameStatus.ended &&
         !_hasShownGameEndPopup) {
+      final endedAt = DateTime.now();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() {
           _showGameEndPopup = true;
           _showGameSummaryPopup = false;
           _hasShownGameEndPopup = true;
-          _gameEndedAt = DateTime.now();
+          _gameEndedAt = endedAt;
         });
+        _maybeNotifyMapPopup(
+          notificationId:
+              'game-end-${widget.gameId}-${endedAt.millisecondsSinceEpoch}',
+          title: 'ゲームが終了しました',
+          body: 'マップ画面を開いて結果を確認しましょう。',
+        );
       });
       return;
     }
@@ -1413,14 +1451,14 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       return;
     }
     if (newPinId != null) {
-      _showOniClearingAlert(newPinId);
+      _showOniClearingAlert(newPinId, isNewClearing: true);
       return;
     }
     final isActiveStillClearing = previousActivePinId != null &&
         clearingPins.contains(previousActivePinId);
     if (!isActiveStillClearing) {
       final fallbackId = clearingPins.first;
-      _showOniClearingAlert(fallbackId);
+      _showOniClearingAlert(fallbackId, isNewClearing: false);
     }
   }
 
@@ -1500,6 +1538,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
             _rescueAlertMessage = message;
           });
         });
+        _maybeNotifyMapPopup(
+          notificationId: 'rescue-${event.id}',
+          title: '救出が完了しました',
+          body: message,
+        );
         break;
       }
       if (event.type == GameEventType.capture) {
@@ -1516,6 +1559,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
             _captureAlertMessage = message;
           });
         });
+        _maybeNotifyMapPopup(
+          notificationId: 'capture-${event.id}',
+          title: '捕獲が発生しました',
+          body: message,
+        );
         break;
       }
     }
@@ -1580,10 +1628,24 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     });
   }
 
-  void _showGeneratorClearedAlertForPin(String _pinId) {
+  void _showGeneratorClearedAlertForPin(String pinId) {
     setState(() {
       _showGeneratorClearedAlert = true;
     });
+    final role = _latestPlayerRole;
+    String body;
+    if (role == PlayerRole.oni) {
+      body = '逃走者が発電所を解除しました。マップで位置を確認してください。';
+    } else if (role == PlayerRole.runner) {
+      body = '仲間の逃走者が発電所を解除しました。次の発電所へ向かいましょう。';
+    } else {
+      body = '発電所が解除されました。マップで状況を確認しましょう。';
+    }
+    _maybeNotifyMapPopup(
+      notificationId: 'generator-cleared-$pinId',
+      title: '発電所が解除されました',
+      body: body,
+    );
   }
 
   void _dismissGeneratorClearedAlert() {
@@ -1594,13 +1656,20 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     }
   }
 
-  void _showOniClearingAlert(String pinId) {
+  void _showOniClearingAlert(String pinId, {required bool isNewClearing}) {
     _oniClearingAlertTimer?.cancel();
     if (!mounted) return;
     setState(() {
       _oniClearingPinId = pinId;
       _isOniClearingAlertVisible = true;
     });
+    if (isNewClearing) {
+      _maybeNotifyMapPopup(
+        notificationId: 'generator-clearing-$pinId',
+        title: '発電所の解除が始まりました',
+        body: '逃走者が発電所の解除を開始しました。すぐに確認してください。',
+      );
+    }
     _oniClearingAlertTimer = Timer(
       const Duration(seconds: _oniClearingAlertDurationSeconds),
       () {
