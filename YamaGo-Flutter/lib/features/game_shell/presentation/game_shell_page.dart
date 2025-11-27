@@ -8,8 +8,10 @@ import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:yamago_flutter/core/location/location_service.dart';
 import 'package:yamago_flutter/core/location/yamanote_constants.dart';
+import 'package:yamago_flutter/core/notifications/push_notification_service.dart';
 import 'package:yamago_flutter/core/services/firebase_providers.dart';
 import 'package:yamago_flutter/features/auth/application/auth_providers.dart';
 import 'package:yamago_flutter/features/game/application/game_control_controller.dart';
@@ -25,6 +27,7 @@ import 'package:yamago_flutter/features/game/application/player_providers.dart';
 import 'package:yamago_flutter/features/game/data/capture_repository.dart';
 import 'package:yamago_flutter/features/game/data/rescue_repository.dart';
 import 'package:yamago_flutter/features/game/data/game_repository.dart';
+import 'package:yamago_flutter/features/game/data/player_repository.dart';
 import 'package:yamago_flutter/features/game/domain/game.dart';
 import 'package:yamago_flutter/features/game/domain/game_event.dart';
 import 'package:yamago_flutter/features/game/domain/player.dart';
@@ -59,11 +62,23 @@ class GameShellPage extends ConsumerStatefulWidget {
 
 class _GameShellPageState extends ConsumerState<GameShellPage> {
   int _currentIndex = 0;
+  StreamSubscription<String>? _tokenRefreshSubscription;
+  String? _lastSyncedFcmToken;
+  bool _hasAttemptedInitialTokenSync = false;
 
   @override
   void initState() {
     super.initState();
     unawaited(_ensureSignedIn());
+    final pushService = ref.read(pushNotificationServiceProvider);
+    unawaited(pushService.initialize());
+    _tokenRefreshSubscription =
+        pushService.onTokenRefresh.listen((token) async {
+      final auth = ref.read(firebaseAuthProvider);
+      final uid = auth.currentUser?.uid;
+      if (uid == null) return;
+      await _syncPlayerNotificationToken(uid, tokenOverride: token);
+    });
   }
 
   void _handleTabSelected(int index) {
@@ -79,14 +94,55 @@ class _GameShellPageState extends ConsumerState<GameShellPage> {
   Future<void> _ensureSignedIn() async {
     try {
       await ref.read(ensureAnonymousSignInProvider.future);
+      final auth = ref.read(firebaseAuthProvider);
+      _maybeSyncTokenForUser(auth.currentUser);
     } catch (error, stackTrace) {
       debugPrint('Failed to ensure FirebaseAuth sign-in: $error');
       debugPrint('$stackTrace');
     }
   }
 
+  Future<void> _syncPlayerNotificationToken(
+    String uid, {
+    String? tokenOverride,
+  }) async {
+    final pushService = ref.read(pushNotificationServiceProvider);
+    final token = tokenOverride ?? await pushService.getToken();
+    if (token == null) return;
+    if (_lastSyncedFcmToken == token) return;
+    final repo = ref.read(playerRepositoryProvider);
+    try {
+      await repo.addPlayerFcmToken(
+        gameId: widget.gameId,
+        uid: uid,
+        token: token,
+      );
+      _lastSyncedFcmToken = token;
+    } catch (error, stackTrace) {
+      debugPrint('Failed to sync FCM token: $error');
+      debugPrint('$stackTrace');
+    }
+  }
+
+  void _maybeSyncTokenForUser(User? user) {
+    if (user == null || _hasAttemptedInitialTokenSync) {
+      return;
+    }
+    _hasAttemptedInitialTokenSync = true;
+    unawaited(_syncPlayerNotificationToken(user.uid));
+  }
+
+  @override
+  void dispose() {
+    _tokenRefreshSubscription?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final auth = ref.watch(firebaseAuthProvider);
+    final user = auth.currentUser;
+    _maybeSyncTokenForUser(user);
     final sections = [
       GameMapSection(gameId: widget.gameId),
       GameChatSection(gameId: widget.gameId),
@@ -541,9 +597,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
         ),
         if (permissionOverlay != null) permissionOverlay,
         if (countdownOverlay != null) countdownOverlay,
-        if (isGameRunning &&
-            _showGeneratorClearedAlert &&
-            playerRole != null)
+        if (isGameRunning && _showGeneratorClearedAlert && playerRole != null)
           Positioned.fill(
             child: Container(
               color: Colors.black54,
@@ -2304,8 +2358,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     }
     var count = 0;
     for (final player in players) {
-      if (player.role == PlayerRole.runner &&
-          player.stats.capturedTimes > 0) {
+      if (player.role == PlayerRole.runner && player.stats.capturedTimes > 0) {
         count++;
       }
     }
@@ -2384,9 +2437,8 @@ class _GameEndResultPopup extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final victoryText = isRunnerVictory ? '逃走者の勝利！' : '鬼の勝利！';
-    final victoryColor = isRunnerVictory
-        ? const Color(0xFF22B59B)
-        : theme.colorScheme.error;
+    final victoryColor =
+        isRunnerVictory ? const Color(0xFF22B59B) : theme.colorScheme.error;
     return Card(
       color: theme.colorScheme.surface.withOpacity(0.96),
       shape: RoundedRectangleBorder(

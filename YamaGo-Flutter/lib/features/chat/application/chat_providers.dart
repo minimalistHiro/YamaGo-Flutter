@@ -7,6 +7,7 @@ import '../domain/chat_message.dart';
 final chatMessagesProvider = StreamProvider.family
     .autoDispose<List<ChatMessage>, ({String gameId, PlayerRole role})>(
         (ref, args) {
+  ref.keepAlive();
   final repo = ref.watch(chatRepositoryProvider);
   final chatRole = args.role == PlayerRole.oni ? ChatRole.oni : ChatRole.runner;
   return repo.watchMessages(args.gameId, chatRole);

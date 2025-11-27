@@ -96,6 +96,20 @@ class PlayerRepository {
     }
     return _playersCollection(gameId).doc(uid).update(data);
   }
+
+  Future<void> addPlayerFcmToken({
+    required String gameId,
+    required String uid,
+    required String token,
+  }) {
+    return _playersCollection(gameId).doc(uid).set(
+      {
+        'fcmTokens': FieldValue.arrayUnion([token]),
+        'fcmTokenUpdatedAt': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+  }
 }
 
 final playerRepositoryProvider = Provider<PlayerRepository>((ref) {

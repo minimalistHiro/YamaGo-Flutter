@@ -37,3 +37,8 @@
   > 「リアルタイムで鬼ごっこを成立させるために、プレイヤーの現在地を取得・共有します。他のプレイヤーにはゲームルールで許可された範囲のみ表示されます。」
 
 - 既存 Web 版の仕様は `reference_repo/` で確認できます。Firestore スキーマやゲームロジックの整合性を保ちながら Flutter へ移植してください。
+
+## Cloud Functions / 通知
+
+- `functions/` ディレクトリに Firebase Functions（Node.js 20）を追加しました。`onChatMessageCreated` で Firestore の `messages_oni / messages_runner` への書き込みを検知し、同じ役割のプレイヤーへ FCM 通知を送信します。
+- デプロイ前に `cd functions && npm install` を実行してください。ローカルエミュレータでの動作確認や本番デプロイは `firebase deploy --only functions` で行えます。
