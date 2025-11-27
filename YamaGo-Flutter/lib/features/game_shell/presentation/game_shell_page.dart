@@ -66,6 +66,7 @@ class _GameShellPageState extends ConsumerState<GameShellPage> {
   StreamSubscription<String>? _tokenRefreshSubscription;
   String? _lastSyncedFcmToken;
   bool _hasAttemptedInitialTokenSync = false;
+  bool _hasCheckedTutorial = false;
 
   @override
   void initState() {
@@ -80,6 +81,7 @@ class _GameShellPageState extends ConsumerState<GameShellPage> {
       if (uid == null) return;
       await _syncPlayerNotificationToken(uid, tokenOverride: token);
     });
+    unawaited(_maybeShowTutorial());
   }
 
   void _handleTabSelected(int index) {
@@ -131,6 +133,21 @@ class _GameShellPageState extends ConsumerState<GameShellPage> {
     }
     _hasAttemptedInitialTokenSync = true;
     unawaited(_syncPlayerNotificationToken(user.uid));
+  }
+
+  Future<void> _maybeShowTutorial() async {
+    if (_hasCheckedTutorial) {
+      return;
+    }
+    _hasCheckedTutorial = true;
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+
+    await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const GameTutorialDialog(),
+    );
   }
 
   @override
@@ -4871,3 +4888,238 @@ class PrivacyReminderCard extends StatelessWidget {
     );
   }
 }
+
+class GameTutorialDialog extends StatefulWidget {
+  const GameTutorialDialog({super.key});
+
+  @override
+  State<GameTutorialDialog> createState() => _GameTutorialDialogState();
+}
+
+class _GameTutorialDialogState extends State<GameTutorialDialog> {
+  final PageController _pageController = PageController();
+  int _currentPage = 0;
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _handleBack() {
+    if (_currentPage == 0) {
+      return;
+    }
+    _pageController.previousPage(
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void _handleNext() {
+    final isLastPage = _currentPage == _tutorialSlides.length - 1;
+    if (isLastPage) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+    _pageController.nextPage(
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return WillPopScope(
+      onWillPop: () async => false,
+      child: Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 48),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'ゲームチュートリアル',
+                  style: theme.textTheme.titleLarge
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '初めての方は一度目を通してください',
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.hintColor),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  height: 360,
+                  child: PageView.builder(
+                    controller: _pageController,
+                    itemCount: _tutorialSlides.length,
+                    onPageChanged: (index) {
+                      setState(() {
+                        _currentPage = index;
+                      });
+                    },
+                    itemBuilder: (context, index) {
+                      final slide = _tutorialSlides[index];
+                      return _TutorialSlide(slide: slide);
+                    },
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(
+                    _tutorialSlides.length,
+                    (index) {
+                      final isActive = index == _currentPage;
+                      final color = isActive
+                          ? theme.colorScheme.primary
+                          : theme.dividerColor;
+                      return AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        margin: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 8,
+                        ),
+                        height: 8,
+                        width: isActive ? 24 : 8,
+                        decoration: BoxDecoration(
+                          color: color,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    TextButton(
+                      onPressed: _currentPage == 0 ? null : _handleBack,
+                      child: const Text('戻る'),
+                    ),
+                    const Spacer(),
+                    ElevatedButton(
+                      onPressed: _handleNext,
+                      child: Text(
+                        _currentPage == _tutorialSlides.length - 1
+                            ? 'プレイ開始'
+                            : '次へ',
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TutorialSlide extends StatelessWidget {
+  const _TutorialSlide({required this.slide});
+
+  final _GameTutorialSlideData slide;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final borderColor = theme.dividerColor.withOpacity(0.7);
+    final fillColor = theme.colorScheme.surfaceVariant.withOpacity(
+      theme.brightness == Brightness.dark ? 0.35 : 0.65,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          slide.title,
+          style: theme.textTheme.titleMedium
+              ?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 12),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: Container(
+            height: 160,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: fillColor,
+              border: Border.all(color: borderColor),
+            ),
+            child: Image.asset(
+              slide.assetPath,
+              fit: BoxFit.cover,
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Expanded(
+          child: SingleChildScrollView(
+            child: Text(
+              slide.description,
+              style: theme.textTheme.bodyMedium,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _GameTutorialSlideData {
+  const _GameTutorialSlideData({
+    required this.title,
+    required this.description,
+    required this.assetPath,
+  });
+
+  final String title;
+  final String description;
+  final String assetPath;
+}
+
+const List<_GameTutorialSlideData> _tutorialSlides = [
+  _GameTutorialSlideData(
+    title: 'YamaGoへようこそ',
+    description:
+        'YamaGoは山手線エリアを舞台に、鬼と逃走者に分かれて街全体で遊ぶリアル鬼ごっこです。'
+        '移動しながら仲間と連携し、現実の地形を活かして勝利をつかみましょう。',
+    assetPath: 'assets/tutorial/page1.png',
+  ),
+  _GameTutorialSlideData(
+    title: '鬼のミッション',
+    description:
+        '鬼役はすべての逃走者を捕獲できれば勝ちです。マップで位置を確認しつつ、'
+        '連絡を取り合って逃走者の退路をふさぎ、少しずつ包囲していきましょう。',
+    assetPath: 'assets/tutorial/page2.png',
+  ),
+  _GameTutorialSlideData(
+    title: '逃走者と発電機',
+    description:
+        '逃走者はマップ上の発電機をすべて解除すると勝利します。解除中は同じ場所に'
+        '一定時間とどまる必要があり、解除開始と同時に鬼へ通知されるため仲間の警戒が重要です。',
+    assetPath: 'assets/tutorial/page3.png',
+  ),
+  _GameTutorialSlideData(
+    title: 'ゲームを始めるには',
+    description:
+        'オーナーがゲームスタートボタンを押すとゲームが始まります。オーナーがいない場合は、'
+        '設定タブの「自分をオーナーにする」ボタンを押して自分をオーナーに任命してください。',
+    assetPath: 'assets/tutorial/page4.png',
+  ),
+  _GameTutorialSlideData(
+    title: 'カウントダウンと設定',
+    description:
+        'スタート後は鬼が動けるようになるまでカウントダウンが走り、その間に逃走者は素早く散開しましょう。'
+        '設定画面ではルールやタイマーなどの各種設定を調整できます。',
+    assetPath: 'assets/tutorial/page5.png',
+  ),
+];
