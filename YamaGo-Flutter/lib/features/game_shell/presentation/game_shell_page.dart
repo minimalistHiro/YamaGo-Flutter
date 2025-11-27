@@ -2979,7 +2979,6 @@ class _MessagesListView extends StatelessWidget {
     final width = MediaQuery.sizeOf(context).width;
     final maxBubbleWidth = width * 0.8;
     return ListView.builder(
-      key: ValueKey(messages.length),
       controller: scrollController,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
       physics: const BouncingScrollPhysics(),
