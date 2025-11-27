@@ -246,6 +246,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
   bool _showGameSummaryPopup = false;
   bool _hasShownGameEndPopup = false;
   DateTime? _gameEndedAt;
+  bool _hasTriggeredAutoGameEnd = false;
   ProviderSubscription<AsyncValue<List<PinPoint>>>? _pinsSubscription;
   ProviderSubscription<AsyncValue<List<GameEvent>>>? _gameEventsSubscription;
   ProviderSubscription<AsyncValue<Position>>? _locationSubscription;
@@ -534,10 +535,17 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     };
 
     final bool allPinsCleared = _areAllPinsCleared(pins);
+    final bool allRunnersDown = _areAllRunnersDown(players);
     final int capturedPlayersCount = _capturedRunnersCount(players);
     final int summaryClearedGenerators = clearedGenerators ?? 0;
     final String formattedGameDuration =
         _formatElapsedDuration(_calculateGameDurationSeconds(game));
+    _maybeTriggerAutoGameEnd(
+      game: game,
+      allPinsCleared: allPinsCleared,
+      allRunnersDown: allRunnersDown,
+      pinCount: game?.pinCount ?? totalGenerators,
+    );
 
     return Stack(
       children: [
@@ -778,6 +786,9 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     required GameStatus? currentStatus,
   }) {
     if (currentStatus == null) return;
+    if (currentStatus != GameStatus.running && _hasTriggeredAutoGameEnd) {
+      _hasTriggeredAutoGameEnd = false;
+    }
     if (!_hasInitializedGameStatus) {
       _hasInitializedGameStatus = true;
       if (currentStatus == GameStatus.ended) {
@@ -953,6 +964,39 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
           SnackBar(content: Text('ゲーム開始に失敗しました: $error')),
         );
       }
+    }
+  }
+
+  void _maybeTriggerAutoGameEnd({
+    required Game? game,
+    required bool allPinsCleared,
+    required bool allRunnersDown,
+    required int? pinCount,
+  }) {
+    if (game?.status != GameStatus.running) {
+      return;
+    }
+    if (!allPinsCleared && !allRunnersDown) {
+      return;
+    }
+    if (_hasTriggeredAutoGameEnd) {
+      return;
+    }
+    _hasTriggeredAutoGameEnd = true;
+    unawaited(_endGameAutomatically(pinCount: pinCount));
+  }
+
+  Future<void> _endGameAutomatically({required int? pinCount}) async {
+    try {
+      final controller = ref.read(gameControlControllerProvider);
+      await controller.endGame(
+        gameId: widget.gameId,
+        pinCount: pinCount,
+      );
+    } catch (error, stackTrace) {
+      debugPrint('Failed to end game automatically: $error');
+      debugPrint('$stackTrace');
+      _hasTriggeredAutoGameEnd = false;
     }
   }
 
@@ -2363,6 +2407,24 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       }
     }
     return count;
+  }
+
+  bool _areAllRunnersDown(List<Player>? players) {
+    if (players == null || players.isEmpty) {
+      return false;
+    }
+    final activeRunners = players
+        .where((player) => player.role == PlayerRole.runner && player.isActive)
+        .toList();
+    if (activeRunners.isEmpty) {
+      return false;
+    }
+    for (final runner in activeRunners) {
+      if (runner.status == PlayerStatus.active) {
+        return false;
+      }
+    }
+    return true;
   }
 
   bool _areAllPinsCleared(List<PinPoint>? pins) {

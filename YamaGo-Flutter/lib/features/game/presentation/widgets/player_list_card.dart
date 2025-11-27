@@ -126,13 +126,6 @@ class _PlayerListTile extends ConsumerWidget {
             PopupMenuButton<String>(
               onSelected: (value) async {
                 switch (value) {
-                  case 'toggleActive':
-                    await repo.setPlayerActive(
-                      gameId: gameId,
-                      uid: player.uid,
-                      isActive: !player.isActive,
-                    );
-                    break;
                   case 'toggleRole':
                     final newRole = player.role == PlayerRole.oni
                         ? PlayerRole.runner
@@ -186,12 +179,6 @@ class _PlayerListTile extends ConsumerWidget {
                 }
               },
               itemBuilder: (context) => [
-                PopupMenuItem(
-                  value: 'toggleActive',
-                  child: Text(
-                    player.isActive ? '表示を停止（離脱扱い）' : '再表示（参加中に戻す）',
-                  ),
-                ),
                 PopupMenuItem(
                   value: 'toggleRole',
                   child: Text(
