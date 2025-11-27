@@ -47,9 +47,11 @@ class CaptureRepository {
         'status': 'downed',
         'capturedAt': now,
         'stats.capturedTimes': FieldValue.increment(1),
+        'updatedAt': now,
       });
       transaction.update(attackerRef, {
         'stats.captures': FieldValue.increment(1),
+        'updatedAt': now,
       });
       transaction.set(captureLogRef, {
         'attackerUid': attackerUid,

@@ -4571,7 +4571,6 @@ class _ActionButtons extends ConsumerStatefulWidget {
 class _ActionButtonsState extends ConsumerState<_ActionButtons> {
   bool _isLeaving = false;
   bool _isClaimingOwner = false;
-  bool _isDeletingGame = false;
   bool _isEndingGame = false;
 
   bool get _isOwner => widget.ownerUid == widget.currentUid;
@@ -4786,76 +4785,6 @@ class _ActionButtonsState extends ConsumerState<_ActionButtons> {
               : const Icon(Icons.logout),
           label: const Text('ログアウト'),
         ),
-        if (_isOwner) ...[
-          const SizedBox(height: 8),
-          ElevatedButton.icon(
-            onPressed: _isDeletingGame
-                ? null
-                : () async {
-                    _dismissKeyboard();
-                    final confirmed = await showDialog<bool>(
-                      context: context,
-                      builder: (context) => AlertDialog(
-                        title: const Text('ゲームを削除'),
-                        content: const Text(
-                          'このゲームに関するプレイヤーやチャット履歴などのデータがすべて削除されます。'
-                          'この操作は取り消せません。実行してもよろしいですか？',
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.of(context).pop(false),
-                            child: const Text('キャンセル'),
-                          ),
-                          ElevatedButton(
-                            onPressed: () => Navigator.of(context).pop(true),
-                            child: const Text('削除する'),
-                          ),
-                        ],
-                      ),
-                    );
-                    if (confirmed != true) return;
-                    setState(() {
-                      _isDeletingGame = true;
-                    });
-                    final router = GoRouter.of(context);
-                    try {
-                      final repo = ref.read(gameRepositoryProvider);
-                      await repo.deleteGame(gameId: widget.gameId);
-                      final exitController =
-                          ref.read(gameExitControllerProvider);
-                      await exitController.leaveGame(gameId: widget.gameId);
-                      if (!mounted) return;
-                      router.goNamed(WelcomePage.routeName);
-                    } catch (error) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('ゲームの削除に失敗しました: $error')),
-                        );
-                      }
-                    } finally {
-                      if (mounted) {
-                        setState(() {
-                          _isDeletingGame = false;
-                        });
-                      }
-                    }
-                  },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.black87,
-            ),
-            icon: _isDeletingGame
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                    ),
-                  )
-                : const Icon(Icons.delete_forever),
-            label: const Text('ゲームを削除'),
-          ),
-        ],
       ],
     );
   }

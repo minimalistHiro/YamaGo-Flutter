@@ -69,6 +69,7 @@ class PlayerRepository {
   }) {
     return _playersCollection(gameId).doc(uid).update({
       'role': role == PlayerRole.oni ? 'oni' : 'runner',
+      'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
@@ -79,6 +80,7 @@ class PlayerRepository {
   }) {
     return _playersCollection(gameId).doc(uid).update({
       'active': isActive,
+      'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
@@ -90,6 +92,7 @@ class PlayerRepository {
   }) {
     final data = <String, dynamic>{
       'nickname': nickname,
+      'updatedAt': FieldValue.serverTimestamp(),
     };
     if (avatarUrl != null) {
       data['avatarUrl'] = avatarUrl;
@@ -106,6 +109,7 @@ class PlayerRepository {
       {
         'fcmTokens': FieldValue.arrayUnion([token]),
         'fcmTokenUpdatedAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
       },
       SetOptions(merge: true),
     );

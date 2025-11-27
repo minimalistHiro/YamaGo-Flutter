@@ -63,9 +63,11 @@ class RescueRepository {
         'rescuedAt': now,
         'lastRescuedBy': rescuerUid,
         'stats.rescuedTimes': FieldValue.increment(1),
+        'updatedAt': now,
       });
       transaction.update(rescuerRef, {
         'stats.rescues': FieldValue.increment(1),
+        'updatedAt': now,
       });
       transaction.set(eventRef, {
         'type': 'rescue',

@@ -17,6 +17,36 @@ const CHAT_CHANNELS = {
   },
 };
 
+const INACTIVITY_DAYS = 30;
+const MILLIS_PER_DAY = 24 * 60 * 60 * 1000;
+
+const SUBCOLLECTION_ACTIVITY_FIELDS = [
+  {
+    name: 'players',
+    orderFields: ['updatedAt', 'joinedAt'],
+  },
+  {
+    name: 'pins',
+    orderFields: ['updatedAt', 'createdAt'],
+  },
+  {
+    name: 'captures',
+    orderFields: ['createdAt'],
+  },
+  {
+    name: 'events',
+    orderFields: ['createdAt'],
+  },
+  {
+    name: 'messages_oni',
+    orderFields: ['timestamp'],
+  },
+  {
+    name: 'messages_runner',
+    orderFields: ['timestamp'],
+  },
+];
+
 exports.onChatMessageCreated = functions
   .region('us-central1')
   .firestore.document('games/{gameId}/{collectionId}/{messageId}')
@@ -196,4 +226,132 @@ async function removeInvalidTokens(gameId, invalidTokens, tokenOwners) {
   if (removals.length > 0) {
     await Promise.all(removals);
   }
+}
+
+exports.cleanupInactiveGames = functions
+  .region('us-central1')
+  .runWith({
+    timeoutSeconds: 540,
+    memory: '512MB',
+  })
+  .pubsub.schedule('0 3 * * *')
+  .timeZone('Asia/Tokyo')
+  .onRun(async () => {
+    const cutoffMs = Date.now() - INACTIVITY_DAYS * MILLIS_PER_DAY;
+    const gamesSnapshot = await db.collection('games').get();
+    if (gamesSnapshot.empty) {
+      functions.logger.info('No games found for inactivity cleanup');
+      return null;
+    }
+
+    let evaluated = 0;
+    let deleted = 0;
+    for (const doc of gamesSnapshot.docs) {
+      evaluated += 1;
+      try {
+        const lastActivity = await getLastActivityForGame(doc);
+        const lastActivityMs = lastActivity?.getTime() ?? null;
+        if (!lastActivityMs || lastActivityMs < cutoffMs) {
+          await db.recursiveDelete(doc.ref);
+          deleted += 1;
+          functions.logger.info('Deleted inactive game', {
+            gameId: doc.id,
+            lastActivity: lastActivity?.toISOString() ?? null,
+          });
+        }
+      } catch (error) {
+        functions.logger.error('Failed to evaluate game for cleanup', {
+          gameId: doc.id,
+          error,
+        });
+      }
+    }
+
+    functions.logger.info('Inactive game cleanup completed', {
+      evaluatedGames: evaluated,
+      deletedGames: deleted,
+      inactivityCutoff: new Date(cutoffMs).toISOString(),
+    });
+    return null;
+  });
+
+async function getLastActivityForGame(doc) {
+  const data = doc.data() || {};
+  const timestamps = [];
+  addTimestampIfPresent(timestamps, data.updatedAt);
+  addTimestampIfPresent(timestamps, data.createdAt);
+  addTimestampIfPresent(timestamps, data.startAt);
+  addTimestampIfPresent(timestamps, data.countdownStartAt);
+
+  for (const config of SUBCOLLECTION_ACTIVITY_FIELDS) {
+    const ts = await fetchLatestTimestamp(doc.ref, config);
+    if (ts) {
+      timestamps.push(ts);
+    }
+  }
+
+  if (timestamps.length === 0) {
+    return null;
+  }
+
+  let latest = timestamps[0];
+  for (const ts of timestamps) {
+    if (ts.getTime() > latest.getTime()) {
+      latest = ts;
+    }
+  }
+  return latest;
+}
+
+async function fetchLatestTimestamp(docRef, config) {
+  for (const field of config.orderFields) {
+    try {
+      const snapshot = await docRef
+        .collection(config.name)
+        .orderBy(field, 'desc')
+        .limit(1)
+        .get();
+      if (!snapshot.empty) {
+        const value = snapshot.docs[0].get(field);
+        const date = convertToDate(value);
+        if (date) {
+          return date;
+        }
+      }
+    } catch (error) {
+      functions.logger.error('Failed to fetch latest timestamp', {
+        gameId: docRef.id,
+        collection: config.name,
+        orderField: field,
+        error,
+      });
+    }
+  }
+  return null;
+}
+
+function addTimestampIfPresent(list, value) {
+  const date = convertToDate(value);
+  if (date) {
+    list.push(date);
+  }
+}
+
+function convertToDate(value) {
+  if (!value) {
+    return null;
+  }
+  if (typeof value.toDate === 'function') {
+    return value.toDate();
+  }
+  if (value instanceof Date) {
+    return value;
+  }
+  if (typeof value === 'number' || typeof value === 'string') {
+    const date = new Date(value);
+    if (!isNaN(date.getTime())) {
+      return date;
+    }
+  }
+  return null;
 }

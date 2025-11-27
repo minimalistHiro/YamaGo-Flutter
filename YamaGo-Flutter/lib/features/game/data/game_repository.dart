@@ -35,6 +35,7 @@ class GameRepository {
       'status': 'pending',
       'ownerUid': ownerUid,
       'createdAt': FieldValue.serverTimestamp(),
+       'updatedAt': FieldValue.serverTimestamp(),
       ...defaultSettings.toMap(),
     });
     return docRef.id;
@@ -119,6 +120,7 @@ class GameRepository {
       'status': 'countdown',
       'countdownStartAt': FieldValue.serverTimestamp(),
       'countdownDurationSec': durationSeconds,
+      'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
@@ -126,12 +128,14 @@ class GameRepository {
     return _gameCollection.doc(gameId).update({
       'status': 'running',
       'startAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
   Future<void> endGame({required String gameId}) async {
     await _gameCollection.doc(gameId).update({
       'status': 'ended',
+      'updatedAt': FieldValue.serverTimestamp(),
     });
     await _reviveDownedRunners(gameId: gameId);
   }
@@ -158,6 +162,7 @@ class GameRepository {
   }) {
     return _gameCollection.doc(gameId).update({
       'ownerUid': newOwnerUid,
+      'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
@@ -165,7 +170,10 @@ class GameRepository {
     required String gameId,
     required GameSettingsInput settings,
   }) {
-    return _gameCollection.doc(gameId).update(settings.toMap());
+    return _gameCollection.doc(gameId).update({
+      ...settings.toMap(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
   }
 
   Future<void> deleteGame({required String gameId}) async {
