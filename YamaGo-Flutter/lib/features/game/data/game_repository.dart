@@ -83,6 +83,34 @@ class GameRepository {
     }, SetOptions(merge: true));
   }
 
+  Future<int> countPlayers({required String gameId}) async {
+    final playersRef = _gameCollection.doc(gameId).collection('players');
+    try {
+      final aggregate = await playersRef.count().get();
+      return aggregate.count ?? 0;
+    } on FirebaseException {
+      final snapshot = await playersRef.get();
+      return snapshot.size;
+    }
+  }
+
+  Future<String?> fetchPlayerRole({
+    required String gameId,
+    required String uid,
+  }) async {
+    final playerRef =
+        _gameCollection.doc(gameId).collection('players').doc(uid);
+    final snapshot = await playerRef.get();
+    if (!snapshot.exists) return null;
+    final data = snapshot.data();
+    if (data == null) return null;
+    final role = data['role'] as String?;
+    if (role == 'oni' || role == 'runner') {
+      return role;
+    }
+    return null;
+  }
+
   Future<void> startCountdown({
     required String gameId,
     required int durationSeconds,

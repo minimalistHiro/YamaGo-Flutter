@@ -71,11 +71,16 @@ class OnboardingController extends StateNotifier<OnboardingState> {
           bytes: avatarBytes,
         );
       }
+      final existingRole = await _gameRepository.fetchPlayerRole(
+        gameId: gameId,
+        uid: uid,
+      );
+      final resolvedRole = existingRole ?? await _determineNextRole(gameId);
       await _gameRepository.addPlayer(
         gameId: gameId,
         uid: uid,
         nickname: nickname,
-        role: 'runner',
+        role: resolvedRole,
         avatarUrl: avatarUrl,
       );
       await _persistProfile(nickname: nickname, lastGameId: gameId);
@@ -93,6 +98,11 @@ class OnboardingController extends StateNotifier<OnboardingState> {
     final store = await _profileStoreFuture;
     await store.saveNickname(nickname);
     await store.saveLastGameId(lastGameId);
+  }
+
+  Future<String> _determineNextRole(String gameId) async {
+    final playerCount = await _gameRepository.countPlayers(gameId: gameId);
+    return playerCount.isEven ? 'oni' : 'runner';
   }
 }
 
