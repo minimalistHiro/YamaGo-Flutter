@@ -289,6 +289,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     });
     unawaited(_initializeKodouPlayer());
     unawaited(_loadCustomMarkers());
+    unawaited(_attemptInitialUserLocationFocus());
   }
 
   @override
@@ -900,6 +901,30 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     );
   }
 
+  Future<void> _attemptInitialUserLocationFocus() async {
+    try {
+      final status = await ref.read(locationPermissionStatusProvider.future);
+      if (!_hasForegroundLocationPermission(status)) {
+        return;
+      }
+      Position? position = await Geolocator.getLastKnownPosition();
+      position ??= await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      if (position == null) {
+        return;
+      }
+      final target = LatLng(position.latitude, position.longitude);
+      _latestUserLocation = target;
+      _cameraTarget = target;
+      if (!mounted) return;
+      _maybeCenterCameraOnUserInitially();
+    } catch (error, stackTrace) {
+      debugPrint('Failed to obtain initial map location: $error');
+      debugPrint('$stackTrace');
+    }
+  }
+
   void _maybeCenterCameraOnUserInitially() {
     if (_hasCenteredOnUserInitially) {
       return;
@@ -1009,10 +1034,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
     });
     try {
       final status = await ref.read(locationPermissionStatusProvider.future);
-      final hasForegroundPermission =
-          status == LocationPermissionStatus.granted ||
-              status == LocationPermissionStatus.limited;
-      if (!hasForegroundPermission) {
+      if (!_hasForegroundLocationPermission(status)) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -2437,6 +2459,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection> {
       }
     }
     return true;
+  }
+
+  bool _hasForegroundLocationPermission(LocationPermissionStatus status) {
+    return status == LocationPermissionStatus.granted ||
+        status == LocationPermissionStatus.limited;
   }
 }
 
