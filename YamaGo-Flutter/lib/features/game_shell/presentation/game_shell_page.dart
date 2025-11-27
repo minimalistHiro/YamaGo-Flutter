@@ -2153,6 +2153,9 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     required double? runnerRadius,
     required double? killerRadius,
   }) {
+    if (pin.status == PinStatus.cleared || pin.cleared) {
+      return true;
+    }
     if (selfPosition == null || role == null) {
       return true;
     }
