@@ -7,5 +7,5 @@ final LatLngBounds yamanoteBounds = LatLngBounds(
   northeast: LatLng(35.88, 139.82),
 );
 
-const double yamanoteMinZoom = 13.0;
+const double yamanoteMinZoom = 12.5;
 const double yamanoteMaxZoom = 19.0;

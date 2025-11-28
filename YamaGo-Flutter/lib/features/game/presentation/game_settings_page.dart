@@ -36,6 +36,7 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
   static const _defaultKillerSeeGenerator = 3000;
   static const _defaultCountdownSeconds = 900;
   static const _defaultGeneratorClearSeconds = 180;
+  static const _maxGeneratorClearSeconds = 30 * 60 + 59;
   static const _defaultGameDurationMinutes = 120;
 
   bool _formInitialized = false;
@@ -234,7 +235,7 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
         _gameDurationMinutes = gameDurationMinutes;
         _generatorClearDurationSeconds =
             (game.generatorClearDurationSec ?? _defaultGeneratorClearSeconds)
-                .clamp(10, 600)
+                .clamp(10, _maxGeneratorClearSeconds)
                 .toDouble();
         _countdownMinutes = countdownSeconds ~/ 60;
         _countdownSeconds = countdownSeconds % 60;
@@ -380,10 +381,14 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
     final normalizedSeconds = _generatorClearDurationSeconds.isFinite
         ? _generatorClearDurationSeconds.round()
         : _defaultGeneratorClearSeconds;
-    final totalSeconds = _clampInt(normalizedSeconds, 10, 600);
+    final totalSeconds =
+        _clampInt(normalizedSeconds, 10, _maxGeneratorClearSeconds);
     final minutes = totalSeconds ~/ 60;
     final seconds = totalSeconds % 60;
-    final minuteOptions = List<int>.generate(11, (index) => index);
+    final minuteOptions = List<int>.generate(
+      _maxGeneratorClearSeconds ~/ 60 + 1,
+      (index) => index,
+    );
     final secondOptions = _generatorSecondOptions(minutes);
     final selectedSeconds =
         secondOptions.contains(seconds) ? seconds : secondOptions.first;
@@ -453,7 +458,7 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
             const SizedBox(height: 8),
             const Text(
               '逃走者が発電所を解除する際のカウントダウン時間です。'
-              '10秒〜10分の範囲で設定できます（推奨: 3分）。',
+              '10秒〜30分59秒の範囲で設定できます（推奨: 3分）。',
               style: TextStyle(fontSize: 12),
             ),
           ],
@@ -669,7 +674,7 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
       final normalizedGameMinutes =
           _clampInt(_gameDurationMinutes.round(), 10, 480);
       final normalizedGeneratorSeconds =
-          _clampInt(_generatorClearDurationSeconds.round(), 10, 600);
+          _clampInt(_generatorClearDurationSeconds.round(), 10, _maxGeneratorClearSeconds);
       final settings = GameSettingsInput(
         captureRadiusM: _captureRadius.toInt(),
         runnerSeeKillerRadiusM: _runnerSeeKiller.toInt(),
@@ -776,10 +781,9 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
 
   List<int> _generatorSecondOptions(int minutes) {
     final minSeconds = minutes == 0 ? 10 : 0;
-    final remaining = 600 - minutes * 60;
-    final maxSeconds = minutes >= 10
-        ? 0
-        : (remaining <= 0 ? 0 : (remaining >= 59 ? 59 : remaining));
+    final remaining = _maxGeneratorClearSeconds - minutes * 60;
+    final maxSeconds =
+        remaining <= 0 ? 0 : (remaining >= 59 ? 59 : remaining);
     if (minSeconds >= maxSeconds) {
       return [minSeconds];
     }
@@ -791,12 +795,11 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
 
   int _normalizeGeneratorSeconds(int minutes, int seconds) {
     final minSeconds = minutes == 0 ? 10 : 0;
-    final remaining = 600 - minutes * 60;
-    final maxSeconds = minutes >= 10
-        ? 0
-        : (remaining <= 0 ? 0 : (remaining >= 59 ? 59 : remaining));
+    final remaining = _maxGeneratorClearSeconds - minutes * 60;
+    final maxSeconds =
+        remaining <= 0 ? 0 : (remaining >= 59 ? 59 : remaining);
     final safeSeconds = _clampInt(seconds, minSeconds, maxSeconds);
-    return _clampInt(minutes * 60 + safeSeconds, 10, 600);
+    return _clampInt(minutes * 60 + safeSeconds, 10, _maxGeneratorClearSeconds);
   }
 
   void _updateGeneratorDuration(int minutes, int seconds) {
