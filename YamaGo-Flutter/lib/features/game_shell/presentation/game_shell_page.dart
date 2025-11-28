@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:audioplayers/audioplayers.dart';
@@ -7,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:yamago_flutter/core/location/location_service.dart';
@@ -61,6 +63,8 @@ class GameShellPage extends ConsumerStatefulWidget {
   ConsumerState<GameShellPage> createState() => _GameShellPageState();
 }
 
+final gameShellTabIndexProvider = StateProvider<int>((ref) => 0);
+
 class _GameShellPageState extends ConsumerState<GameShellPage> {
   int _currentIndex = 0;
   StreamSubscription<String>? _tokenRefreshSubscription;
@@ -71,6 +75,7 @@ class _GameShellPageState extends ConsumerState<GameShellPage> {
   @override
   void initState() {
     super.initState();
+    ref.read(gameShellTabIndexProvider.notifier).state = _currentIndex;
     unawaited(_ensureSignedIn());
     final pushService = ref.read(pushNotificationServiceProvider);
     unawaited(pushService.initialize());
@@ -92,6 +97,7 @@ class _GameShellPageState extends ConsumerState<GameShellPage> {
     setState(() {
       _currentIndex = index;
     });
+    ref.read(gameShellTabIndexProvider.notifier).state = index;
   }
 
   Future<void> _ensureSignedIn() async {
@@ -2859,16 +2865,42 @@ class GameChatSection extends ConsumerStatefulWidget {
 }
 
 class _GameChatSectionState extends ConsumerState<GameChatSection> {
+  static const _chatTutorialSeenKey = 'chat.tutorial.seen';
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
+  final FocusNode _composerFocusNode = FocusNode();
+  final GlobalKey _composerKey = GlobalKey();
+  final GlobalKey _headerKey = GlobalKey();
   bool _sending = false;
   bool _hasAutoScrolledToBottom = false;
   bool _isUserNearBottom = true;
+  bool _isChatTutorialVisible = false;
+  bool _isCheckingTutorialStatus = false;
+  bool _hasCompletedChatTutorial = false;
+  _ChatTutorialStep? _currentTutorialStep;
+  Rect? _composerHighlightRect;
+  Rect? _headerHighlightRect;
+  SharedPreferences? _sharedPreferences;
+  ProviderSubscription<int>? _tabIndexSubscription;
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_handleScrollPositionChanged);
+    _tabIndexSubscription = ref.listenManual<int>(
+      gameShellTabIndexProvider,
+      (previous, next) {
+        if (next == 1) {
+          unawaited(_handleChatTabActivated());
+        }
+      },
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (ref.read(gameShellTabIndexProvider) == 1) {
+        unawaited(_handleChatTabActivated());
+      }
+    });
   }
 
   @override
@@ -2876,7 +2908,17 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
     _scrollController.removeListener(_handleScrollPositionChanged);
     _controller.dispose();
     _scrollController.dispose();
+    _tabIndexSubscription?.close();
+    _composerFocusNode.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_isChatTutorialVisible) {
+      _scheduleTutorialTargetCapture();
+    }
   }
 
   @override
@@ -2937,79 +2979,106 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
               (gameId: widget.gameId, channel: chatChannel),
             ),
           );
+          final tutorialRect = _activeTutorialRect;
 
-          return Column(
+          return Stack(
             children: [
-              Expanded(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  onTap: _dismissKeyboard,
-                  child: Column(
-                    children: [
-                      SafeArea(
-                        bottom: false,
-                        child: _ChatHeader(
-                          title: headerTitle,
-                          eyebrow: headerEyebrow,
-                          palette: palette,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Expanded(
-                        child: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 200),
-                          child: chatState.when(
-                            data: (messages) {
-                              final shouldForceInitialScroll =
-                                  messages.isNotEmpty &&
-                                      !_hasAutoScrolledToBottom;
-                              if (shouldForceInitialScroll) {
-                                _hasAutoScrolledToBottom = true;
-                              }
-                              if (messages.isNotEmpty) {
-                                _scheduleScrollToBottom(
-                                  force: shouldForceInitialScroll,
-                                );
-                              }
-                              if (messages.isEmpty) {
-                                return _EmptyChatMessage(palette: palette);
-                              }
-                              return _MessagesListView(
-                                messages: messages,
+              Column(
+                children: [
+                  Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onTap: _dismissKeyboard,
+                      child: Column(
+                        children: [
+                          SafeArea(
+                            bottom: false,
+                            child: KeyedSubtree(
+                              key: _headerKey,
+                              child: _ChatHeader(
+                                title: headerTitle,
+                                eyebrow: headerEyebrow,
                                 palette: palette,
-                                playersByUid: playersByUid,
-                                currentUid: user.uid,
-                                scrollController: _scrollController,
-                              );
-                            },
-                            loading: () => const Center(
-                              child: CircularProgressIndicator(),
+                              ),
                             ),
-                            error: (error, _) => Center(
-                              child: Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 24),
-                                child: Text(
-                                  'チャットを読み込めませんでした。\n$error',
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(color: Colors.white70),
+                          ),
+                          const SizedBox(height: 8),
+                          Expanded(
+                            child: AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 200),
+                              child: chatState.when(
+                                data: (messages) {
+                                  final shouldForceInitialScroll =
+                                      messages.isNotEmpty &&
+                                          !_hasAutoScrolledToBottom;
+                                  if (shouldForceInitialScroll) {
+                                    _hasAutoScrolledToBottom = true;
+                                  }
+                                  if (messages.isNotEmpty) {
+                                    _scheduleScrollToBottom(
+                                      force: shouldForceInitialScroll,
+                                    );
+                                  }
+                                  if (messages.isEmpty) {
+                                    return _EmptyChatMessage(palette: palette);
+                                  }
+                                  return _MessagesListView(
+                                    messages: messages,
+                                    palette: palette,
+                                    playersByUid: playersByUid,
+                                    currentUid: user.uid,
+                                    scrollController: _scrollController,
+                                  );
+                                },
+                                loading: () => const Center(
+                                  child: CircularProgressIndicator(),
+                                ),
+                                error: (error, _) => Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 24),
+                                    child: Text(
+                                      'チャットを読み込めませんでした。\n$error',
+                                      textAlign: TextAlign.center,
+                                      style:
+                                          const TextStyle(color: Colors.white70),
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
+                  KeyedSubtree(
+                    key: _composerKey,
+                    child: _ChatComposer(
+                      controller: _controller,
+                      sending: _sending,
+                      palette: palette,
+                      focusNode: _composerFocusNode,
+                      onSendRequested: () =>
+                          _sendMessage(context, player, chatChannel),
+                    ),
+                  ),
+                ],
+              ),
+              if (_isChatTutorialVisible)
+                _ChatTutorialOverlay(
+                  highlightRect: tutorialRect,
+                  accentColor: palette.accentColor,
+                  message: _currentTutorialMessage,
+                  preferBelow:
+                      _currentTutorialStep == _ChatTutorialStep.header,
+                  isLastStep:
+                      _currentTutorialStep == _ChatTutorialStep.header,
+                  step: _currentTutorialStep == _ChatTutorialStep.header ? 2 : 1,
+                  totalSteps: 2,
+                  onNext: _advanceChatTutorial,
+                  onSkip: _skipChatTutorial,
                 ),
-              ),
-              _ChatComposer(
-                controller: _controller,
-                sending: _sending,
-                palette: palette,
-                onSendRequested: () =>
-                    _sendMessage(context, player, chatChannel),
-              ),
             ],
           );
         },
@@ -3045,6 +3114,126 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
 
   void _dismissKeyboard() {
     FocusManager.instance.primaryFocus?.unfocus();
+  }
+
+  Future<void> _handleChatTabActivated() async {
+    if (!mounted ||
+        _isChatTutorialVisible ||
+        _hasCompletedChatTutorial ||
+        _isCheckingTutorialStatus) {
+      return;
+    }
+    _isCheckingTutorialStatus = true;
+    try {
+      final prefs =
+          _sharedPreferences ??= await SharedPreferences.getInstance();
+      final alreadySeen = prefs.getBool(_chatTutorialSeenKey) ?? false;
+      if (alreadySeen) {
+        _hasCompletedChatTutorial = true;
+        return;
+      }
+      _startChatTutorial();
+    } finally {
+      _isCheckingTutorialStatus = false;
+    }
+  }
+
+  void _startChatTutorial() {
+    if (!mounted) return;
+    _composerFocusNode.unfocus();
+    setState(() {
+      _isChatTutorialVisible = true;
+      _currentTutorialStep = _ChatTutorialStep.input;
+    });
+    _scheduleTutorialTargetCapture();
+  }
+
+  void _scheduleTutorialTargetCapture() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_isChatTutorialVisible) return;
+      final root = context.findRenderObject();
+      if (root is! RenderBox || !root.hasSize) return;
+
+      Rect? composerRect;
+      final composerContext = _composerKey.currentContext;
+      if (composerContext != null) {
+        final renderBox =
+            composerContext.findRenderObject() as RenderBox?;
+        if (renderBox != null && renderBox.hasSize) {
+          final offset = renderBox.localToGlobal(Offset.zero);
+          final localOffset = root.globalToLocal(offset);
+          composerRect = localOffset & renderBox.size;
+        }
+      }
+
+      Rect? headerRect;
+      final headerContext = _headerKey.currentContext;
+      if (headerContext != null) {
+        final renderBox = headerContext.findRenderObject() as RenderBox?;
+        if (renderBox != null && renderBox.hasSize) {
+          final offset = renderBox.localToGlobal(Offset.zero);
+          final localOffset = root.globalToLocal(offset);
+          headerRect = localOffset & renderBox.size;
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _composerHighlightRect = composerRect;
+        _headerHighlightRect = headerRect;
+      });
+    });
+  }
+
+  void _advanceChatTutorial() {
+    if (_currentTutorialStep == _ChatTutorialStep.input) {
+      _composerFocusNode.unfocus();
+      setState(() {
+        _currentTutorialStep = _ChatTutorialStep.header;
+      });
+      _scheduleTutorialTargetCapture();
+      return;
+    }
+    unawaited(_completeChatTutorial());
+  }
+
+  void _skipChatTutorial() {
+    unawaited(_completeChatTutorial());
+  }
+
+  Future<void> _completeChatTutorial() async {
+    if (!mounted) return;
+    setState(() {
+      _isChatTutorialVisible = false;
+      _currentTutorialStep = null;
+    });
+    _composerFocusNode.unfocus();
+    _hasCompletedChatTutorial = true;
+    final prefs =
+        _sharedPreferences ??= await SharedPreferences.getInstance();
+    await prefs.setBool(_chatTutorialSeenKey, true);
+  }
+
+  Rect? get _activeTutorialRect {
+    switch (_currentTutorialStep) {
+      case _ChatTutorialStep.input:
+        return _composerHighlightRect;
+      case _ChatTutorialStep.header:
+        return _headerHighlightRect;
+      default:
+        return null;
+    }
+  }
+
+  String get _currentTutorialMessage {
+    switch (_currentTutorialStep) {
+      case _ChatTutorialStep.input:
+        return 'ここでメッセージを送り合い、仲間と相談できます。';
+      case _ChatTutorialStep.header:
+        return 'ゲームが始まると鬼と逃走者でチャットが分かれます。「総合チャット」の表示から切り替わりを確認しましょう。';
+      default:
+        return '';
+    }
   }
 
   Future<void> _sendMessage(
@@ -3088,6 +3277,8 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
     }
   }
 }
+
+enum _ChatTutorialStep { input, header }
 
 class _MessagesListView extends StatelessWidget {
   const _MessagesListView({
@@ -3327,12 +3518,14 @@ class _ChatComposer extends StatelessWidget {
     required this.controller,
     required this.sending,
     required this.palette,
+    this.focusNode,
     required this.onSendRequested,
   });
 
   final TextEditingController controller;
   final bool sending;
   final _ChatPalette palette;
+  final FocusNode? focusNode;
   final VoidCallback onSendRequested;
 
   @override
@@ -3355,6 +3548,7 @@ class _ChatComposer extends StatelessWidget {
                     children: [
                       TextField(
                         controller: controller,
+                        focusNode: focusNode,
                         maxLines: 4,
                         minLines: 1,
                         maxLength: 200,
@@ -3613,6 +3807,226 @@ class _ChatPalette {
       case ChatChannel.general:
         return _generalPalette;
     }
+  }
+}
+
+class _ChatTutorialOverlay extends StatelessWidget {
+  const _ChatTutorialOverlay({
+    required this.highlightRect,
+    required this.accentColor,
+    required this.message,
+    required this.step,
+    required this.totalSteps,
+    required this.isLastStep,
+    required this.preferBelow,
+    required this.onNext,
+    required this.onSkip,
+  });
+
+  final Rect? highlightRect;
+  final Color accentColor;
+  final String message;
+  final int step;
+  final int totalSteps;
+  final bool isLastStep;
+  final bool preferBelow;
+  final VoidCallback onNext;
+  final VoidCallback onSkip;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final rectWithPadding = highlightRect?.inflate(12);
+    final tooltipWidth = math.min(size.width - 32, 360.0);
+    final centerX = rectWithPadding?.center.dx ?? size.width / 2;
+    final double left = math.max(
+      16,
+      math.min(centerX - tooltipWidth / 2, size.width - tooltipWidth - 16),
+    ).toDouble();
+    final double baseTop = preferBelow
+        ? (rectWithPadding?.bottom ?? size.height * 0.55) + 16
+        : (rectWithPadding?.top ?? size.height * 0.45) - 160;
+    final double top = math.max(24, math.min(baseTop, size.height - 200))
+        .toDouble();
+
+    return Positioned.fill(
+      child: IgnorePointer(
+        ignoring: false,
+        child: Material(
+          color: Colors.transparent,
+          child: Stack(
+            children: [
+              GestureDetector(
+                onTap: () {},
+                child: CustomPaint(
+                  painter: _TutorialDimPainter(
+                    highlightRect: rectWithPadding,
+                    color: Colors.black.withOpacity(0.65),
+                  ),
+                  child: const SizedBox.expand(),
+                ),
+              ),
+              if (rectWithPadding != null)
+                Positioned(
+                  left: rectWithPadding.left,
+                  top: rectWithPadding.top,
+                  width: rectWithPadding.width,
+                  height: rectWithPadding.height,
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(28),
+                        border: Border.all(color: accentColor, width: 2),
+                        boxShadow: [
+                          BoxShadow(
+                            color: accentColor.withOpacity(0.35),
+                            blurRadius: 24,
+                            spreadRadius: 2,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              Positioned(
+                left: left,
+                top: top,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: tooltipWidth,
+                  ),
+                  child: _ChatTutorialTooltip(
+                    message: message,
+                    accentColor: accentColor,
+                    step: step,
+                    totalSteps: totalSteps,
+                    isLastStep: isLastStep,
+                    onNext: onNext,
+                    onSkip: onSkip,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ChatTutorialTooltip extends StatelessWidget {
+  const _ChatTutorialTooltip({
+    required this.message,
+    required this.accentColor,
+    required this.step,
+    required this.totalSteps,
+    required this.isLastStep,
+    required this.onNext,
+    required this.onSkip,
+  });
+
+  final String message;
+  final Color accentColor;
+  final int step;
+  final int totalSteps;
+  final bool isLastStep;
+  final VoidCallback onNext;
+  final VoidCallback onSkip;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      borderRadius: BorderRadius.circular(20),
+      color: const Color(0xFF0A1418).withOpacity(0.92),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'STEP $step / $totalSteps',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: accentColor,
+                letterSpacing: 3,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: Colors.white,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                TextButton(
+                  onPressed: onSkip,
+                  style: TextButton.styleFrom(foregroundColor: Colors.white70),
+                  child: const Text('スキップ'),
+                ),
+                const Spacer(),
+                ElevatedButton(
+                  onPressed: onNext,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: accentColor,
+                    foregroundColor: Colors.black,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  child: Text(isLastStep ? '完了' : '次へ'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TutorialDimPainter extends CustomPainter {
+  const _TutorialDimPainter({
+    required this.highlightRect,
+    required this.color,
+  });
+
+  final Rect? highlightRect;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    final overlayPath =
+        Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
+    if (highlightRect == null) {
+      canvas.drawPath(overlayPath, paint);
+      return;
+    }
+    final highlightPath = Path()
+      ..addRRect(
+        RRect.fromRectAndRadius(
+          highlightRect!,
+          const Radius.circular(28),
+        ),
+      );
+    final dimPath =
+        Path.combine(PathOperation.difference, overlayPath, highlightPath);
+    canvas.drawPath(dimPath, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _TutorialDimPainter oldDelegate) {
+    return oldDelegate.highlightRect != highlightRect ||
+        oldDelegate.color != color;
   }
 }
 

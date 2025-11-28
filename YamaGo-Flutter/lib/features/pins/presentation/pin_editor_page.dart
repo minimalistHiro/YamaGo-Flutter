@@ -567,7 +567,7 @@ class _PinEditorInfoPanel extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'ピンはドラッグ＆ドロップで移動できます。変更は自動保存されます。',
+              'ピンは長押しでドラッグ＆ドロップで移動できます。変更は自動保存されます。',
               style: theme.textTheme.bodySmall,
             ),
             if (hiddenPinCount > 0)
