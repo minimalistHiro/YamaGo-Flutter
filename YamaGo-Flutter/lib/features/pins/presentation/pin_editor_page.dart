@@ -8,6 +8,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import 'package:yamago_flutter/core/location/location_service.dart';
 import 'package:yamago_flutter/core/location/yamanote_constants.dart';
+import 'package:yamago_flutter/core/maps/marker_icon_factory.dart';
 import 'package:yamago_flutter/features/game/application/player_providers.dart';
 import 'package:yamago_flutter/features/pins/application/pin_providers.dart';
 import 'package:yamago_flutter/features/pins/data/pin_repository.dart';
@@ -37,6 +38,9 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
   bool _isSaving = false;
   String? _activePinId;
   String? _errorMessage;
+  BitmapDescriptor? _pendingPinMarkerDescriptor;
+  BitmapDescriptor? _clearingPinMarkerDescriptor;
+  BitmapDescriptor? _clearedPinMarkerDescriptor;
   LatLng? _latestUserLocation;
   bool _isLocatingUser = false;
   bool _isAwaitingInitialLocation = true;
@@ -45,6 +49,7 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
   @override
   void initState() {
     super.initState();
+    unawaited(_loadPinMarkerIcons());
     _locationSubscription = ref.listenManual<AsyncValue<Position>>(
       locationStreamProvider,
       (previous, next) {
@@ -206,6 +211,34 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
     );
   }
 
+  Future<void> _loadPinMarkerIcons() async {
+    const markerIconFactory = MarkerIconFactory();
+    try {
+      final results = await Future.wait([
+        markerIconFactory.create(
+          color: Colors.yellow.shade600,
+          icon: Icons.electric_bolt,
+        ),
+        markerIconFactory.create(
+          color: Colors.orange.shade600,
+          icon: Icons.electric_bolt,
+        ),
+        markerIconFactory.create(
+          color: Colors.grey.shade500,
+          icon: Icons.electric_bolt,
+        ),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _pendingPinMarkerDescriptor = results[0];
+        _clearingPinMarkerDescriptor = results[1];
+        _clearedPinMarkerDescriptor = results[2];
+      });
+    } catch (error) {
+      debugPrint('Failed to load pin marker icons: $error');
+    }
+  }
+
   Future<void> _attemptInitialUserCenter() async {
     try {
       final status = await ref.read(locationPermissionStatusProvider.future);
@@ -286,20 +319,14 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
     for (var index = 0; index < pins.length; index++) {
       final pin = pins[index];
       final position = LatLng(pin.lat, pin.lng);
-      final hue = switch (pin.status) {
-        PinStatus.pending => BitmapDescriptor.hueYellow,
-        PinStatus.clearing => BitmapDescriptor.hueOrange,
-        PinStatus.cleared => BitmapDescriptor.hueGreen,
-      };
+      final icon = _pinIconForStatus(pin.status);
       final isActive = pin.id == activePinId;
       markers.add(
         Marker(
           markerId: MarkerId(pin.id),
           position: position,
           draggable: true,
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            isActive ? BitmapDescriptor.hueAzure : hue,
-          ),
+          icon: icon,
           infoWindow: InfoWindow(
             title: '発電所ピン #${index + 1}',
             snippet: pin.id,
@@ -312,6 +339,20 @@ class _PinEditorPageState extends ConsumerState<PinEditorPage> {
       );
     }
     return markers;
+  }
+
+  BitmapDescriptor _pinIconForStatus(PinStatus status) {
+    switch (status) {
+      case PinStatus.pending:
+        return _pendingPinMarkerDescriptor ??
+            BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow);
+      case PinStatus.clearing:
+        return _clearingPinMarkerDescriptor ??
+            BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange);
+      case PinStatus.cleared:
+        return _clearedPinMarkerDescriptor ??
+            BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure);
+    }
   }
 
   Future<void> _handleMyLocationButtonPressed() async {

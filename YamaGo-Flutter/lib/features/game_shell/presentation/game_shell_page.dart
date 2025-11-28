@@ -1,7 +1,5 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:ui' as ui;
-
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:yamago_flutter/core/location/location_service.dart';
 import 'package:yamago_flutter/core/location/yamanote_constants.dart';
+import 'package:yamago_flutter/core/maps/marker_icon_factory.dart';
 import 'package:yamago_flutter/core/notifications/local_notification_service.dart';
 import 'package:yamago_flutter/core/notifications/push_notification_service.dart';
 import 'package:yamago_flutter/core/services/firebase_providers.dart';
@@ -1796,29 +1795,30 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   }
 
   Future<void> _loadCustomMarkers() async {
+    const markerIconFactory = MarkerIconFactory();
     try {
       final results = await Future.wait([
-        _createMarkerDescriptor(
+        markerIconFactory.create(
           color: Colors.redAccent,
           icon: Icons.whatshot,
         ),
-        _createMarkerDescriptor(
+        markerIconFactory.create(
           color: Colors.green,
           icon: Icons.run_circle,
         ),
-        _createMarkerDescriptor(
+        markerIconFactory.create(
           color: Colors.grey.shade600,
           icon: Icons.run_circle,
         ),
-        _createMarkerDescriptor(
+        markerIconFactory.create(
           color: Colors.yellow.shade600,
           icon: Icons.electric_bolt,
         ),
-        _createMarkerDescriptor(
+        markerIconFactory.create(
           color: Colors.orange.shade600,
           icon: Icons.electric_bolt,
         ),
-        _createMarkerDescriptor(
+        markerIconFactory.create(
           color: Colors.grey.shade500,
           icon: Icons.electric_bolt,
         ),
@@ -1835,62 +1835,6 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     } catch (error) {
       debugPrint('Failed to load custom markers: $error');
     }
-  }
-
-  Future<BitmapDescriptor> _createMarkerDescriptor({
-    required Color color,
-    required IconData icon,
-  }) async {
-    const double width = 96;
-    const double height = 132;
-    final recorder = ui.PictureRecorder();
-    final canvas = ui.Canvas(recorder);
-    final fillPaint = ui.Paint()
-      ..color = color
-      ..style = PaintingStyle.fill;
-    final strokePaint = ui.Paint()
-      ..color = color.darken()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 4;
-    final center = ui.Offset(width / 2, width / 2);
-    canvas.drawCircle(center, width / 2, fillPaint);
-    canvas.drawCircle(center, width / 2 - 2, strokePaint);
-    final tailPath = ui.Path()
-      ..moveTo(width / 2, height)
-      ..lineTo(width * 0.2, width * 0.75)
-      ..lineTo(width * 0.8, width * 0.75)
-      ..close();
-    canvas.drawPath(tailPath, fillPaint);
-    canvas.drawPath(tailPath, strokePaint);
-
-    final textPainter = TextPainter(
-      textDirection: ui.TextDirection.ltr,
-    );
-    final textSpan = TextSpan(
-      text: String.fromCharCode(icon.codePoint),
-      style: TextStyle(
-        fontSize: width * 0.65,
-        fontFamily: icon.fontFamily,
-        package: icon.fontPackage,
-        color: Colors.white,
-      ),
-    );
-    textPainter.text = textSpan;
-    textPainter.layout();
-    final iconOffset = ui.Offset(
-      center.dx - (textPainter.width / 2),
-      center.dy - (textPainter.height / 2),
-    );
-    textPainter.paint(canvas, iconOffset);
-
-    final picture = recorder.endRecording();
-    final image = await picture.toImage(width.toInt(), height.toInt());
-    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-    final buffer = bytes?.buffer.asUint8List();
-    if (buffer == null) {
-      throw StateError('Failed to encode marker image');
-    }
-    return BitmapDescriptor.fromBytes(buffer);
   }
 
   _CaptureTargetInfo? _findCaptureTarget({
@@ -5047,14 +4991,6 @@ class _RescueTargetInfo {
 
   final Player runner;
   final double distanceMeters;
-}
-
-extension on Color {
-  Color darken([double amount = 0.2]) {
-    final hsl = HSLColor.fromColor(this);
-    final lightness = (hsl.lightness - amount).clamp(0.0, 1.0);
-    return hsl.withLightness(lightness).toColor();
-  }
 }
 
 class _MapStartGameButtonState extends ConsumerState<_MapStartGameButton> {
