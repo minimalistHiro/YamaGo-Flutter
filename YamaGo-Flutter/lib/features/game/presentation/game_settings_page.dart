@@ -293,6 +293,21 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
   }
 
   Widget _buildGameDurationCard() {
+    final normalizedMinutes =
+        _gameDurationMinutes.isFinite ? _gameDurationMinutes.round() : 120;
+    final totalMinutes = _clampInt(normalizedMinutes, 10, 480);
+    final hours = totalMinutes ~/ 60;
+    final minutes = totalMinutes % 60;
+    final hourOptions = List<int>.generate(9, (index) => index);
+    final minuteOptions = _gameDurationMinuteOptions(hours);
+    final selectedMinutes =
+        minuteOptions.contains(minutes) ? minutes : minuteOptions.first;
+    if (selectedMinutes != minutes) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _updateGameDuration(hours, selectedMinutes);
+      });
+    }
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -304,23 +319,49 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
-            Text(
-                '長さ: ${_formatGameDurationLabel(_gameDurationMinutes.toInt())}'),
-            Slider(
-              min: 10,
-              max: 480,
-              divisions: (480 - 10) ~/ 5,
-              label: '${_gameDurationMinutes.toInt()}分',
-              value: _gameDurationMinutes,
-              onChanged: _isSaving
-                  ? null
-                  : (value) => setState(() => _gameDurationMinutes = value),
-            ),
+            Text('長さ: ${_formatGameDurationLabel(totalMinutes)}'),
+            const SizedBox(height: 8),
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: const [
-                Text('10分'),
-                Text('8時間'),
+              children: [
+                DropdownButton<int>(
+                  value: hours,
+                  items: hourOptions
+                      .map(
+                        (value) => DropdownMenuItem<int>(
+                          value: value,
+                          child: Text('$value'),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _isSaving
+                      ? null
+                      : (value) {
+                          if (value == null) return;
+                          _updateGameDuration(value, minutes);
+                        },
+                ),
+                const SizedBox(width: 8),
+                const Text('時間'),
+                const SizedBox(width: 24),
+                DropdownButton<int>(
+                  value: selectedMinutes,
+                  items: minuteOptions
+                      .map(
+                        (value) => DropdownMenuItem<int>(
+                          value: value,
+                          child: Text('$value'),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _isSaving
+                      ? null
+                      : (value) {
+                          if (value == null) return;
+                          _updateGameDuration(hours, value);
+                        },
+                ),
+                const SizedBox(width: 8),
+                const Text('分'),
               ],
             ),
             const SizedBox(height: 8),
@@ -336,8 +377,23 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
   }
 
   Widget _buildGeneratorClearDurationCard() {
-    final seconds = _generatorClearDurationSeconds.toInt();
-    final formatted = _formatShortDuration(seconds);
+    final normalizedSeconds = _generatorClearDurationSeconds.isFinite
+        ? _generatorClearDurationSeconds.round()
+        : _defaultGeneratorClearSeconds;
+    final totalSeconds = _clampInt(normalizedSeconds, 10, 600);
+    final minutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
+    final minuteOptions = List<int>.generate(11, (index) => index);
+    final secondOptions = _generatorSecondOptions(minutes);
+    final selectedSeconds =
+        secondOptions.contains(seconds) ? seconds : secondOptions.first;
+    if (selectedSeconds != seconds) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _updateGeneratorDuration(minutes, selectedSeconds);
+      });
+    }
+    final formatted = _formatShortDuration(totalSeconds);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -350,22 +406,48 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
             ),
             const SizedBox(height: 12),
             Text('解除に必要な時間: $formatted'),
-            Slider(
-              min: 10,
-              max: 600,
-              divisions: 590,
-              label: formatted,
-              value: _generatorClearDurationSeconds,
-              onChanged: _isSaving
-                  ? null
-                  : (value) =>
-                      setState(() => _generatorClearDurationSeconds = value),
-            ),
+            const SizedBox(height: 8),
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: const [
-                Text('10秒'),
-                Text('10分'),
+              children: [
+                DropdownButton<int>(
+                  value: minutes,
+                  items: minuteOptions
+                      .map(
+                        (value) => DropdownMenuItem<int>(
+                          value: value,
+                          child: Text('$value'),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _isSaving
+                      ? null
+                      : (value) {
+                          if (value == null) return;
+                          _updateGeneratorDuration(value, seconds);
+                        },
+                ),
+                const SizedBox(width: 8),
+                const Text('分'),
+                const SizedBox(width: 24),
+                DropdownButton<int>(
+                  value: selectedSeconds,
+                  items: secondOptions
+                      .map(
+                        (value) => DropdownMenuItem<int>(
+                          value: value,
+                          child: Text('$value'),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _isSaving
+                      ? null
+                      : (value) {
+                          if (value == null) return;
+                          _updateGeneratorDuration(minutes, value);
+                        },
+                ),
+                const SizedBox(width: 8),
+                const Text('秒'),
               ],
             ),
             const SizedBox(height: 8),
@@ -584,6 +666,10 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
       final newPinCount = _pinCount.toInt();
       final pinCountChanged =
           previousPinCount != null && previousPinCount != newPinCount;
+      final normalizedGameMinutes =
+          _clampInt(_gameDurationMinutes.round(), 10, 480);
+      final normalizedGeneratorSeconds =
+          _clampInt(_generatorClearDurationSeconds.round(), 10, 600);
       final settings = GameSettingsInput(
         captureRadiusM: _captureRadius.toInt(),
         runnerSeeKillerRadiusM: _runnerSeeKiller.toInt(),
@@ -593,9 +679,8 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
         killerSeeGeneratorRadiusM: _killerSeeGenerator.toInt(),
         pinCount: newPinCount,
         countdownDurationSec: _countdownMinutes * 60 + _countdownSeconds,
-        gameDurationSec: _gameDurationMinutes.toInt() * 60,
-        generatorClearDurationSec:
-            _generatorClearDurationSeconds.clamp(10, 600).toInt(),
+        gameDurationSec: normalizedGameMinutes * 60,
+        generatorClearDurationSec: normalizedGeneratorSeconds,
       );
       await repo.updateGameSettings(gameId: widget.gameId, settings: settings);
       if (pinCountChanged) {
@@ -654,6 +739,78 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
       return '${minutes}分';
     }
     return '${minutes}分${secs}秒';
+  }
+
+  List<int> _gameDurationMinuteOptions(int hours) {
+    final minMinutes = hours == 0 ? 10 : 0;
+    final remaining = 480 - hours * 60;
+    final maxMinutes = remaining <= 0
+        ? 0
+        : (remaining >= 59 ? 59 : remaining);
+    if (minMinutes >= maxMinutes) {
+      return [minMinutes];
+    }
+    return List<int>.generate(
+      maxMinutes - minMinutes + 1,
+      (index) => minMinutes + index,
+    );
+  }
+
+  int _normalizeGameDurationMinutes(int hours, int minutes) {
+    final minMinutes = hours == 0 ? 10 : 0;
+    final remaining = 480 - hours * 60;
+    final maxMinutes = remaining <= 0
+        ? 0
+        : (remaining >= 59 ? 59 : remaining);
+    final safeMinutes = _clampInt(minutes, minMinutes, maxMinutes);
+    return _clampInt(hours * 60 + safeMinutes, 10, 480);
+  }
+
+  void _updateGameDuration(int hours, int minutes) {
+    final next = _normalizeGameDurationMinutes(hours, minutes);
+    if (_gameDurationMinutes.round() == next) return;
+    setState(() {
+      _gameDurationMinutes = next.toDouble();
+    });
+  }
+
+  List<int> _generatorSecondOptions(int minutes) {
+    final minSeconds = minutes == 0 ? 10 : 0;
+    final remaining = 600 - minutes * 60;
+    final maxSeconds = minutes >= 10
+        ? 0
+        : (remaining <= 0 ? 0 : (remaining >= 59 ? 59 : remaining));
+    if (minSeconds >= maxSeconds) {
+      return [minSeconds];
+    }
+    return List<int>.generate(
+      maxSeconds - minSeconds + 1,
+      (index) => minSeconds + index,
+    );
+  }
+
+  int _normalizeGeneratorSeconds(int minutes, int seconds) {
+    final minSeconds = minutes == 0 ? 10 : 0;
+    final remaining = 600 - minutes * 60;
+    final maxSeconds = minutes >= 10
+        ? 0
+        : (remaining <= 0 ? 0 : (remaining >= 59 ? 59 : remaining));
+    final safeSeconds = _clampInt(seconds, minSeconds, maxSeconds);
+    return _clampInt(minutes * 60 + safeSeconds, 10, 600);
+  }
+
+  void _updateGeneratorDuration(int minutes, int seconds) {
+    final next = _normalizeGeneratorSeconds(minutes, seconds);
+    if (_generatorClearDurationSeconds.round() == next) return;
+    setState(() {
+      _generatorClearDurationSeconds = next.toDouble();
+    });
+  }
+
+  int _clampInt(int value, int min, int max) {
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
   }
 
   Widget _buildAppBarAvatar(
