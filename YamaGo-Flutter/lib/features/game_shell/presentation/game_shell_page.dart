@@ -258,6 +258,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   BitmapDescriptor? _oniMarkerDescriptor;
   BitmapDescriptor? _runnerMarkerDescriptor;
   BitmapDescriptor? _generatorPinMarkerDescriptor;
+  BitmapDescriptor? _clearingPinMarkerDescriptor;
   BitmapDescriptor? _clearedPinMarkerDescriptor;
   final Set<String> _knownClearedPinIds = <String>{};
   final Set<String> _knownClearingPinIds = <String>{};
@@ -1810,7 +1811,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
           icon: Icons.run_circle,
         ),
         _createMarkerDescriptor(
-          color: Colors.amber.shade600,
+          color: Colors.yellow.shade600,
+          icon: Icons.electric_bolt,
+        ),
+        _createMarkerDescriptor(
+          color: Colors.orange.shade600,
           icon: Icons.electric_bolt,
         ),
         _createMarkerDescriptor(
@@ -1824,7 +1829,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
         _runnerMarkerDescriptor = results[1];
         _downedMarkerDescriptor = results[2];
         _generatorPinMarkerDescriptor = results[3];
-        _clearedPinMarkerDescriptor = results[4];
+        _clearingPinMarkerDescriptor = results[4];
+        _clearedPinMarkerDescriptor = results[5];
       });
     } catch (error) {
       debugPrint('Failed to load custom markers: $error');
@@ -2223,7 +2229,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     required double? runnerRadius,
     required double? killerRadius,
   }) {
-    if (pin.status == PinStatus.cleared || pin.cleared) {
+    if (_shouldAlwaysDisplayPin(pin)) {
       return true;
     }
     if (selfPosition == null || role == null) {
@@ -2243,6 +2249,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     return distance <= viewerRadius;
   }
 
+  bool _shouldAlwaysDisplayPin(PinPoint pin) {
+    if (pin.cleared) return true;
+    return pin.status == PinStatus.cleared || pin.status == PinStatus.clearing;
+  }
+
   String _pinStatusLabel(PinStatus status) {
     return switch (status) {
       PinStatus.pending => '稼働中',
@@ -2257,7 +2268,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
         return _generatorPinMarkerDescriptor ??
             BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow);
       case PinStatus.clearing:
-        return _generatorPinMarkerDescriptor ??
+        return _clearingPinMarkerDescriptor ??
             BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange);
       case PinStatus.cleared:
         return _clearedPinMarkerDescriptor ??
