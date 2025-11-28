@@ -1,22 +1,38 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/game_repository.dart';
 import '../../pins/data/pin_repository.dart';
 import '../domain/game.dart';
+import '../../../core/time/server_time_service.dart';
 
 class GameControlController {
-  GameControlController(this._repository, this._pinRepository);
+  GameControlController(
+    this._repository,
+    this._pinRepository,
+    this._serverTimeService,
+  );
 
   final GameRepository _repository;
   final PinRepository _pinRepository;
+  final ServerTimeService _serverTimeService;
 
   Future<void> startCountdown({
     required String gameId,
     required int durationSeconds,
-  }) {
-    return _repository.startCountdown(
+  }) async {
+    DateTime? countdownEndAt;
+    try {
+      final serverNow = await _serverTimeService.fetchServerTime();
+      countdownEndAt = serverNow.add(Duration(seconds: durationSeconds));
+    } catch (error, stackTrace) {
+      debugPrint('Failed to sync server time before countdown: $error');
+      debugPrint('$stackTrace');
+    }
+    await _repository.startCountdown(
       gameId: gameId,
       durationSeconds: durationSeconds,
+      countdownEndAt: countdownEndAt,
     );
   }
 
@@ -53,5 +69,6 @@ class GameControlController {
 final gameControlControllerProvider = Provider<GameControlController>((ref) {
   final repo = ref.watch(gameRepositoryProvider);
   final pinRepo = ref.watch(pinRepositoryProvider);
-  return GameControlController(repo, pinRepo);
+  final serverTimeService = ref.watch(serverTimeServiceProvider);
+  return GameControlController(repo, pinRepo, serverTimeService);
 });

@@ -15,6 +15,7 @@ import 'package:yamago_flutter/core/maps/marker_icon_factory.dart';
 import 'package:yamago_flutter/core/notifications/local_notification_service.dart';
 import 'package:yamago_flutter/core/notifications/push_notification_service.dart';
 import 'package:yamago_flutter/core/services/firebase_providers.dart';
+import 'package:yamago_flutter/core/time/server_time_service.dart';
 import 'package:yamago_flutter/features/auth/application/auth_providers.dart';
 import 'package:yamago_flutter/features/game/application/game_control_controller.dart';
 import 'package:yamago_flutter/features/game/application/game_event_providers.dart';
@@ -86,6 +87,7 @@ class _GameShellPageState extends ConsumerState<GameShellPage> {
       await _syncPlayerNotificationToken(uid, tokenOverride: token);
     });
     unawaited(_maybeShowTutorial());
+    unawaited(_syncServerTimeOffset());
   }
 
   void _handleTabSelected(int index) {
@@ -153,6 +155,15 @@ class _GameShellPageState extends ConsumerState<GameShellPage> {
       barrierDismissible: false,
       builder: (context) => const GameTutorialDialog(),
     );
+  }
+
+  Future<void> _syncServerTimeOffset() async {
+    try {
+      await ref.read(serverTimeServiceProvider).ensureSynchronized();
+    } catch (error, stackTrace) {
+      debugPrint('Failed to sync server time offset: $error');
+      debugPrint('$stackTrace');
+    }
   }
 
   @override
@@ -481,7 +492,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       permissionState,
       locationState,
     );
-    final countdownRemainingSeconds = game?.countdownRemainingSeconds;
+    final countdownRemainingSeconds = _calculateCountdownRemainingSeconds(game);
     final runningRemainingSeconds = game?.runningRemainingSeconds;
     final isCountdownActive = game?.status == GameStatus.countdown &&
         countdownRemainingSeconds != null &&
@@ -497,7 +508,6 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     );
     _maybeTriggerAutoStart(
       game: game,
-      currentUid: currentUid,
       context: context,
       isCountdownActive: isCountdownActive,
       remainingSeconds: countdownRemainingSeconds,
@@ -1059,15 +1069,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
 
   void _maybeTriggerAutoStart({
     required Game? game,
-    required String? currentUid,
     required BuildContext context,
     required bool isCountdownActive,
     required int? remainingSeconds,
   }) {
-    if (game == null ||
-        currentUid == null ||
-        game.status != GameStatus.countdown ||
-        game.ownerUid != currentUid) {
+    if (game == null || game.status != GameStatus.countdown) {
       _countdownAutoStartTriggered = false;
       return;
     }
@@ -1099,6 +1105,21 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
         );
       }
     }
+  }
+
+  int? _calculateCountdownRemainingSeconds(Game? game) {
+    if (game == null) return null;
+    final endAt = game.countdownEndAt;
+    if (endAt == null) {
+      return game.countdownRemainingSeconds;
+    }
+    final serverTimeService = ref.read(serverTimeServiceProvider);
+    final now = serverTimeService.now();
+    final remaining = endAt.difference(now).inSeconds;
+    if (remaining < 0) {
+      return 0;
+    }
+    return remaining;
   }
 
   void _maybeTriggerAutoGameEnd({

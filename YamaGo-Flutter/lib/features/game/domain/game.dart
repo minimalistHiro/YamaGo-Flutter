@@ -11,6 +11,7 @@ class Game {
     required this.ownerUid,
     this.startAt,
     this.countdownStartAt,
+    this.countdownEndAt,
     this.countdownDurationSec,
     this.generatorClearDurationSec,
     this.pinCount,
@@ -29,6 +30,7 @@ class Game {
   final String ownerUid;
   final DateTime? startAt;
   final DateTime? countdownStartAt;
+  final DateTime? countdownEndAt;
   final int? countdownDurationSec;
   final int? generatorClearDurationSec;
   final int? pinCount;
@@ -79,6 +81,7 @@ class Game {
       ownerUid: data['ownerUid'] as String? ?? '',
       startAt: _toDate(data['startAt']),
       countdownStartAt: _toDate(data['countdownStartAt']),
+      countdownEndAt: _toDate(data['countdownEndAt']),
       countdownDurationSec: (data['countdownDurationSec'] as num?)?.toInt(),
       generatorClearDurationSec:
           (data['generatorClearDurationSec'] as num?)?.toInt(),
