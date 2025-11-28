@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 enum GameStatus { pending, countdown, running, ended }
 
+enum GameEndResult { runnerVictory, oniVictory, draw }
+
 class Game {
   const Game({
     required this.id,
@@ -19,6 +21,7 @@ class Game {
     this.killerDetectRunnerRadiusM,
     this.killerSeeGeneratorRadiusM,
     this.gameDurationSec,
+    this.endResult,
   });
 
   final String id;
@@ -36,6 +39,7 @@ class Game {
   final int? killerDetectRunnerRadiusM;
   final int? killerSeeGeneratorRadiusM;
   final int? gameDurationSec;
+  final GameEndResult? endResult;
 
   int? get countdownRemainingSeconds {
     if (status != GameStatus.countdown ||
@@ -89,6 +93,7 @@ class Game {
       killerSeeGeneratorRadiusM:
           (data['killerSeeGeneratorRadiusM'] as num?)?.toInt(),
       gameDurationSec: (data['gameDurationSec'] as num?)?.toInt(),
+      endResult: parseGameEndResult(data['endResult'] as String?),
     );
   }
 }
@@ -110,4 +115,28 @@ DateTime? _toDate(dynamic value) {
   if (value is Timestamp) return value.toDate();
   if (value is DateTime) return value;
   return null;
+}
+
+GameEndResult? parseGameEndResult(String? value) {
+  switch (value) {
+    case 'runner_victory':
+      return GameEndResult.runnerVictory;
+    case 'oni_victory':
+      return GameEndResult.oniVictory;
+    case 'draw':
+      return GameEndResult.draw;
+    default:
+      return null;
+  }
+}
+
+String gameEndResultToRawValue(GameEndResult result) {
+  switch (result) {
+    case GameEndResult.runnerVictory:
+      return 'runner_victory';
+    case GameEndResult.oniVictory:
+      return 'oni_victory';
+    case GameEndResult.draw:
+      return 'draw';
+  }
 }

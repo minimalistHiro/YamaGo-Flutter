@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/game_repository.dart';
 import '../../pins/data/pin_repository.dart';
+import '../domain/game.dart';
 
 class GameControlController {
   GameControlController(this._repository, this._pinRepository);
@@ -25,8 +26,12 @@ class GameControlController {
     await _repository.startGame(gameId: gameId);
   }
 
-  Future<void> endGame({required String gameId, int? pinCount}) async {
-    await _repository.endGame(gameId: gameId);
+  Future<void> endGame({
+    required String gameId,
+    int? pinCount,
+    required GameEndResult result,
+  }) async {
+    await _repository.endGame(gameId: gameId, result: result);
     final resolvedPinCount = await _resolvePinCount(gameId, pinCount);
     if (resolvedPinCount != null) {
       await _pinRepository.reseedPinsWithRandomLocations(

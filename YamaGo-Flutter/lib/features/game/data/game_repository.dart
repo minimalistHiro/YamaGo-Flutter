@@ -132,9 +132,13 @@ class GameRepository {
     });
   }
 
-  Future<void> endGame({required String gameId}) async {
+  Future<void> endGame({
+    required String gameId,
+    required GameEndResult result,
+  }) async {
     await _gameCollection.doc(gameId).update({
       'status': 'ended',
+      'endResult': gameEndResultToRawValue(result),
       'updatedAt': FieldValue.serverTimestamp(),
     });
     await _reviveDownedRunners(gameId: gameId);

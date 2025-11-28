@@ -617,6 +617,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     final int summaryClearedGenerators = clearedGenerators ?? 0;
     final String formattedGameDuration =
         _formatElapsedDuration(_calculateGameDurationSeconds(game));
+    final gameEndResult = _resolveGameEndResult(
+      game: game,
+      allPinsCleared: allPinsCleared,
+      allRunnersDown: allRunnersDown,
+    );
     _maybeTriggerAutoGameEnd(
       game: game,
       allPinsCleared: allPinsCleared,
@@ -767,7 +772,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
                 child: Padding(
                   padding: const EdgeInsets.all(24),
                   child: _GameEndResultPopup(
-                    isRunnerVictory: allPinsCleared,
+                    result: gameEndResult,
                     onNext: _handleGameEndPopupNext,
                   ),
                 ),
@@ -875,6 +880,10 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       }
       return;
     }
+    if (previousStatus != GameStatus.running &&
+        currentStatus == GameStatus.running) {
+      _notifyGameStarted();
+    }
     if (currentStatus == GameStatus.ended &&
         previousStatus != GameStatus.ended &&
         !_hasShownGameEndPopup) {
@@ -911,6 +920,21 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     _showGameSummaryPopup = false;
     _hasShownGameEndPopup = false;
     _gameEndedAt = null;
+  }
+
+  void _notifyGameStarted() {
+    final role = _latestPlayerRole;
+    final body = switch (role) {
+      PlayerRole.oni => '逃走者が動き出しました。マップで位置を確認して捕獲を開始しましょう。',
+      PlayerRole.runner => 'ゲームが始まりました。仲間と協力して発電所を解除しましょう。',
+      _ => 'ゲームが始まりました。マップ画面で状況を確認しましょう。',
+    };
+    _maybeNotifyMapPopup(
+      notificationId:
+          'game-start-${widget.gameId}-${DateTime.now().millisecondsSinceEpoch}',
+      title: 'ゲームが開始しました',
+      body: body,
+    );
   }
 
   void _handleGameEndPopupNext() {
@@ -1086,22 +1110,46 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     if (game?.status != GameStatus.running) {
       return;
     }
-    if (!allPinsCleared && !allRunnersDown) {
+    final result = _autoGameEndResult(
+      allPinsCleared: allPinsCleared,
+      allRunnersDown: allRunnersDown,
+    );
+    if (result == null) {
       return;
     }
     if (_hasTriggeredAutoGameEnd) {
       return;
     }
     _hasTriggeredAutoGameEnd = true;
-    unawaited(_endGameAutomatically(pinCount: pinCount));
+    unawaited(_endGameAutomatically(pinCount: pinCount, result: result));
   }
 
-  Future<void> _endGameAutomatically({required int? pinCount}) async {
+  GameEndResult? _autoGameEndResult({
+    required bool allPinsCleared,
+    required bool allRunnersDown,
+  }) {
+    if (!allPinsCleared && !allRunnersDown) {
+      return null;
+    }
+    if (allPinsCleared) {
+      return GameEndResult.runnerVictory;
+    }
+    if (allRunnersDown) {
+      return GameEndResult.oniVictory;
+    }
+    return null;
+  }
+
+  Future<void> _endGameAutomatically({
+    required int? pinCount,
+    required GameEndResult result,
+  }) async {
     try {
       final controller = ref.read(gameControlControllerProvider);
       await controller.endGame(
         gameId: widget.gameId,
         pinCount: pinCount,
+        result: result,
       );
     } catch (error, stackTrace) {
       debugPrint('Failed to end game automatically: $error');
@@ -2537,6 +2585,27 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     return '${secs}秒';
   }
 
+  GameEndResult? _resolveGameEndResult({
+    required Game? game,
+    required bool allPinsCleared,
+    required bool allRunnersDown,
+  }) {
+    final explicit = game?.endResult;
+    if (explicit != null) {
+      return explicit;
+    }
+    if (game?.status != GameStatus.ended) {
+      return null;
+    }
+    if (allPinsCleared) {
+      return GameEndResult.runnerVictory;
+    }
+    if (allRunnersDown) {
+      return GameEndResult.oniVictory;
+    }
+    return GameEndResult.draw;
+  }
+
   int _capturedRunnersCount(List<Player>? players) {
     if (players == null || players.isEmpty) {
       return 0;
@@ -2634,19 +2703,37 @@ class _InfoBanner extends StatelessWidget {
 
 class _GameEndResultPopup extends StatelessWidget {
   const _GameEndResultPopup({
-    required this.isRunnerVictory,
+    required this.result,
     required this.onNext,
   });
 
-  final bool isRunnerVictory;
+  final GameEndResult? result;
   final VoidCallback onNext;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final victoryText = isRunnerVictory ? '逃走者の勝利！' : '鬼の勝利！';
-    final victoryColor =
-        isRunnerVictory ? const Color(0xFF22B59B) : theme.colorScheme.error;
+    final resolvedResult = result;
+    late final String victoryText;
+    late final Color victoryColor;
+    switch (resolvedResult) {
+      case GameEndResult.runnerVictory:
+        victoryText = '逃走者の勝利！';
+        victoryColor = const Color(0xFF22B59B);
+        break;
+      case GameEndResult.oniVictory:
+        victoryText = '鬼の勝利！';
+        victoryColor = theme.colorScheme.error;
+        break;
+      case GameEndResult.draw:
+        victoryText = '引き分け';
+        victoryColor = theme.colorScheme.primary;
+        break;
+      default:
+        victoryText = '結果を確認してください';
+        victoryColor = theme.colorScheme.primary;
+        break;
+    }
     return Card(
       color: theme.colorScheme.surface.withOpacity(0.96),
       shape: RoundedRectangleBorder(
@@ -5170,6 +5257,7 @@ class _ActionButtonsState extends ConsumerState<_ActionButtons> {
                       await controller.endGame(
                         gameId: widget.gameId,
                         pinCount: widget.pinCount,
+                        result: GameEndResult.draw,
                       );
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
