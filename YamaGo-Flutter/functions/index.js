@@ -207,6 +207,155 @@ exports.onChatMessageCreated = functions
     return null;
   });
 
+exports.notifyInactivePlayersOnGameStart = functions
+  .region('us-central1')
+  .firestore.document('games/{gameId}')
+  .onUpdate(async (change, context) => {
+    const beforeData = change.before.data();
+    const afterData = change.after.data();
+    if (!afterData) {
+      return null;
+    }
+    const previousStatus = beforeData?.status;
+    const currentStatus = afterData.status;
+    if (currentStatus !== 'running' || previousStatus === 'running') {
+      return null;
+    }
+
+    const gameId = context.params.gameId;
+    try {
+      const playersSnapshot = await db
+        .collection('games')
+        .doc(gameId)
+        .collection('players')
+        .get();
+
+      if (playersSnapshot.empty) {
+        functions.logger.info(
+          'No players found for game start notification',
+          { gameId }
+        );
+        return null;
+      }
+
+      const tokens = [];
+      const tokenOwners = new Map();
+
+      playersSnapshot.forEach((doc) => {
+        const data = doc.data() || {};
+        if (data.active !== false) {
+          return;
+        }
+        const playerTokens = data.fcmTokens;
+        if (!Array.isArray(playerTokens)) {
+          return;
+        }
+        playerTokens.forEach((token) => {
+          if (typeof token === 'string' && token.length > 0) {
+            tokens.push(token);
+            if (!tokenOwners.has(token)) {
+              tokenOwners.set(token, doc.id);
+            }
+          }
+        });
+      });
+
+      if (tokens.length === 0) {
+        functions.logger.info(
+          'No inactive players to notify on game start',
+          { gameId }
+        );
+        return null;
+      }
+
+      const notification = {
+        title: 'ゲームが開始しました',
+        body: 'アプリを開いてマップを確認しましょう。',
+      };
+      const dataPayload = {
+        type: 'game_start',
+        gameId,
+      };
+
+      const invalidTokens = new Set();
+      const chunkSize = 500;
+      for (let i = 0; i < tokens.length; i += chunkSize) {
+        const chunk = tokens.slice(i, i + chunkSize);
+        try {
+          functions.logger.info('Sending game start notification batch', {
+            gameId,
+            batchSize: chunk.length,
+          });
+          const response = await messaging.sendEachForMulticast({
+            tokens: chunk,
+            notification,
+            data: dataPayload,
+            android: {
+              priority: 'high',
+              notification: {
+                sound: 'default',
+                channelId: 'map_events',
+              },
+            },
+            apns: {
+              headers: {
+                'apns-priority': '10',
+                'apns-push-type': 'alert',
+              },
+              payload: {
+                aps: {
+                  alert: notification,
+                  sound: 'default',
+                  category: 'GAME_START',
+                },
+              },
+            },
+          });
+          response.responses.forEach((res, idx) => {
+            if (!res.success) {
+              const code = res.error?.code || '';
+              if (
+                code === 'messaging/registration-token-not-registered' ||
+                code === 'messaging/invalid-registration-token'
+              ) {
+                invalidTokens.add(chunk[idx]);
+              } else {
+                functions.logger.error(
+                  'Game start notification delivery failed',
+                  {
+                    code,
+                    error: res.error,
+                    token: chunk[idx],
+                    gameId,
+                  }
+                );
+              }
+            }
+          });
+        } catch (error) {
+          functions.logger.error(
+            'Failed to send game start notification batch',
+            {
+              error,
+              gameId,
+            }
+          );
+        }
+      }
+
+      if (invalidTokens.size > 0) {
+        await removeInvalidTokens(gameId, invalidTokens, tokenOwners);
+      }
+    } catch (error) {
+      functions.logger.error('Game start notification handling failed', {
+        error,
+        gameId,
+      });
+    }
+
+    return null;
+  });
+
 async function removeInvalidTokens(gameId, invalidTokens, tokenOwners) {
   const removals = [];
   invalidTokens.forEach((token) => {

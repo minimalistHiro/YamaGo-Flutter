@@ -115,11 +115,14 @@ class GameRepository {
   Future<void> startCountdown({
     required String gameId,
     required int durationSeconds,
+    DateTime? countdownStartAt,
     DateTime? countdownEndAt,
   }) {
     final updates = <String, dynamic>{
       'status': 'countdown',
-      'countdownStartAt': FieldValue.serverTimestamp(),
+      'countdownStartAt': countdownStartAt != null
+          ? Timestamp.fromDate(countdownStartAt)
+          : FieldValue.serverTimestamp(),
       'countdownDurationSec': durationSeconds,
       'updatedAt': FieldValue.serverTimestamp(),
     };

@@ -293,6 +293,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   bool _shouldPlayKodouSound = false;
   bool _isKodouPlaying = false;
   bool _isAppInForeground = true;
+  bool? _lastReportedPlayerActiveStatus;
+  String? _lastReportedPlayerActiveUid;
 
   @override
   void initState() {
@@ -303,6 +305,10 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     if (lifecycleState != null) {
       _isAppInForeground = lifecycleState == AppLifecycleState.resumed;
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _maybeUpdatePlayerActiveStatus();
+    });
     _pinsSubscription = ref.listenManual<AsyncValue<List<PinPoint>>>(
       pinsStreamProvider(widget.gameId),
       (previous, next) {
@@ -338,6 +344,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _maybeUpdatePlayerActiveStatus(isActiveOverride: false);
     _statusTicker?.cancel();
     _pinClearTimer?.cancel();
     _oniClearingAlertTimer?.cancel();
@@ -356,6 +363,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _isAppInForeground = state == AppLifecycleState.resumed;
+    _maybeUpdatePlayerActiveStatus(isActiveOverride: _isAppInForeground);
   }
 
   void _maybeNotifyMapPopup({
@@ -374,6 +382,38 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     );
   }
 
+  void _maybeUpdatePlayerActiveStatus({
+    String? uid,
+    bool? isActiveOverride,
+  }) {
+    final resolvedUid = uid ?? ref.read(firebaseAuthProvider).currentUser?.uid;
+    if (resolvedUid == null) {
+      _lastReportedPlayerActiveUid = null;
+      _lastReportedPlayerActiveStatus = null;
+      return;
+    }
+    final shouldBeActive = isActiveOverride ?? _isAppInForeground;
+    if (_lastReportedPlayerActiveUid == resolvedUid &&
+        _lastReportedPlayerActiveStatus == shouldBeActive) {
+      return;
+    }
+    _lastReportedPlayerActiveUid = resolvedUid;
+    _lastReportedPlayerActiveStatus = shouldBeActive;
+    final repo = ref.read(playerRepositoryProvider);
+    unawaited(
+      repo
+          .setPlayerActive(
+        gameId: widget.gameId,
+        uid: resolvedUid,
+        isActive: shouldBeActive,
+      )
+          .catchError((error, stackTrace) {
+        debugPrint('Failed to update player activity: $error');
+        debugPrint('$stackTrace');
+      }),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final permissionState = ref.watch(locationPermissionStatusProvider);
@@ -385,6 +425,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     ref.watch(playerLocationUpdaterProvider(widget.gameId));
     final players = playersState.valueOrNull;
     final currentUid = auth.currentUser?.uid;
+    _maybeUpdatePlayerActiveStatus(uid: currentUid);
     AsyncValue<Player?>? currentPlayerState;
     if (currentUid != null) {
       currentPlayerState = ref.watch(

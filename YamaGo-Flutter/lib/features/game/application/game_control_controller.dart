@@ -21,10 +21,12 @@ class GameControlController {
     required String gameId,
     required int durationSeconds,
   }) async {
+    DateTime? countdownStartAt;
     DateTime? countdownEndAt;
     try {
       final serverNow = await _serverTimeService.fetchServerTime();
-      countdownEndAt = serverNow.add(Duration(seconds: durationSeconds));
+      countdownStartAt = serverNow.add(const Duration(seconds: 1));
+      countdownEndAt = countdownStartAt.add(Duration(seconds: durationSeconds));
     } catch (error, stackTrace) {
       debugPrint('Failed to sync server time before countdown: $error');
       debugPrint('$stackTrace');
@@ -32,6 +34,7 @@ class GameControlController {
     await _repository.startCountdown(
       gameId: gameId,
       durationSeconds: durationSeconds,
+      countdownStartAt: countdownStartAt,
       countdownEndAt: countdownEndAt,
     );
   }
