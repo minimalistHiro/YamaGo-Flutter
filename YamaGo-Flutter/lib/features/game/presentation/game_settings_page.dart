@@ -92,8 +92,6 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
                 ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
-                    _buildProfileHeader(context, playerAsync),
-                    const SizedBox(height: 16),
                     if (_errorMessage != null) ...[
                       Card(
                         color: Theme.of(context).colorScheme.errorContainer,
@@ -687,84 +685,6 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
         ),
       ),
       error: (_, __) => placeholder,
-    );
-  }
-
-  Widget _buildProfileHeader(
-    BuildContext context,
-    AsyncValue<Player?>? playerAsync,
-  ) {
-    final theme = Theme.of(context);
-    Widget content;
-    if (playerAsync == null) {
-      content = _buildProfileContent(
-        context,
-        player: null,
-        theme: theme,
-      );
-    } else {
-      content = playerAsync.when(
-        data: (player) => _buildProfileContent(
-          context,
-          player: player,
-          theme: theme,
-        ),
-        loading: () => const SizedBox(
-          height: 96,
-          child: Center(child: CircularProgressIndicator()),
-        ),
-        error: (error, _) => Text(
-          'プロフィールを読み込めませんでした: $error',
-          style: theme.textTheme.bodySmall,
-        ),
-      );
-    }
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              'あなたのプロフィール',
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 12),
-            content,
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildProfileContent(
-    BuildContext context, {
-    required Player? player,
-    required ThemeData theme,
-  }) {
-    final nickname = player?.nickname ?? 'プレイヤー';
-    final role = switch (player?.role) {
-      PlayerRole.oni => '鬼',
-      PlayerRole.runner => '逃走者',
-      null => '未設定',
-    };
-    return Column(
-      children: [
-        _buildAvatarView(context, player?.avatarUrl),
-        const SizedBox(height: 12),
-        Text(
-          nickname,
-          style: theme.textTheme.titleMedium,
-        ),
-        const SizedBox(height: 4),
-        Text(
-          role,
-          style: theme.textTheme.bodySmall
-              ?.copyWith(color: theme.colorScheme.primary),
-        ),
-      ],
     );
   }
 
