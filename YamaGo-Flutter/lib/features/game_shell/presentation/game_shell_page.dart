@@ -296,6 +296,14 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   bool _isAppInForeground = true;
   bool? _lastReportedPlayerActiveStatus;
   String? _lastReportedPlayerActiveUid;
+  bool _showTimedEventPopup = false;
+  _TimedEventPopupData? _activeTimedEvent;
+  final Set<int> _triggeredTimedEventQuarters = <int>{};
+  DateTime? _currentGameStartAt;
+  int? _pendingTimedEventQuarter;
+  static const int _defaultGameDurationSeconds = 7200;
+  static const int _timedEventDefaultRequiredRunners = 3;
+  static const int _timedEventTimeLimitMinutes = 5;
 
   @override
   void initState() {
@@ -602,7 +610,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
         showRescueAlert ||
         showCaptureAlert ||
         _showGameEndPopup ||
-        _showGameSummaryPopup;
+        _showGameSummaryPopup ||
+        _showTimedEventPopup;
 
     final actionButtons = <Widget>[];
     if (showStartButton) {
@@ -678,7 +687,12 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       game: game,
       allPinsCleared: allPinsCleared,
       allRunnersDown: allRunnersDown,
+      runningRemainingSeconds: runningRemainingSeconds,
       pinCount: game?.pinCount ?? totalGenerators,
+    );
+    _maybeHandleTimedEvents(
+      game: game,
+      players: players,
     );
 
     return Stack(
@@ -810,6 +824,22 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
                   child: _CaptureAlert(
                     message: _captureAlertMessage!,
                     onDismissed: _dismissCaptureAlert,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        if (_showTimedEventPopup && _activeTimedEvent != null)
+          Positioned.fill(
+            child: Container(
+              color: Colors.black54,
+              alignment: Alignment.center,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: _TimedEventPopup(
+                    data: _activeTimedEvent!,
+                    onClose: _handleTimedEventPopupDismissed,
                   ),
                 ),
               ),
@@ -974,6 +1004,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     _gameEndedAt = null;
   }
 
+  void _clearTimedEventPopupState() {
+    _showTimedEventPopup = false;
+    _activeTimedEvent = null;
+  }
+
   void _notifyGameStarted() {
     final role = _latestPlayerRole;
     final body = switch (role) {
@@ -1002,6 +1037,78 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     setState(() {
       _showGameSummaryPopup = false;
     });
+  }
+
+  void _maybeHandleTimedEvents({
+    required Game? game,
+    required List<Player>? players,
+  }) {
+    final status = game?.status;
+    final startAt = game?.startAt;
+    if (status != GameStatus.running || startAt == null) {
+      final shouldHidePopup = _showTimedEventPopup || _activeTimedEvent != null;
+      _triggeredTimedEventQuarters.clear();
+      _currentGameStartAt = null;
+      _pendingTimedEventQuarter = null;
+      if (shouldHidePopup) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(_clearTimedEventPopupState);
+        });
+      }
+      return;
+    }
+    if (_currentGameStartAt != startAt) {
+      _currentGameStartAt = startAt;
+      _triggeredTimedEventQuarters.clear();
+      _pendingTimedEventQuarter = null;
+    }
+    final totalDurationSeconds =
+        game?.gameDurationSec ?? _defaultGameDurationSeconds;
+    if (totalDurationSeconds <= 0) {
+      return;
+    }
+    final elapsed = game?.runningElapsedSeconds;
+    if (elapsed == null || elapsed <= 0) {
+      return;
+    }
+    final double quarterDuration = totalDurationSeconds / 4;
+    for (var quarter = 1; quarter <= 3; quarter++) {
+      final thresholdSeconds = (quarterDuration * quarter).ceil();
+      final hasTriggered = _triggeredTimedEventQuarters.contains(quarter);
+      if (elapsed >= thresholdSeconds &&
+          !hasTriggered &&
+          _pendingTimedEventQuarter != quarter) {
+        _triggeredTimedEventQuarters.add(quarter);
+        _pendingTimedEventQuarter = quarter;
+        final popupData = _buildTimedEventPopupData(
+          quarterIndex: quarter,
+          totalDurationSeconds: totalDurationSeconds,
+          players: players,
+        );
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {
+            _activeTimedEvent = popupData;
+            _showTimedEventPopup = true;
+            _pendingTimedEventQuarter = null;
+          });
+        });
+        _maybeNotifyMapPopup(
+          notificationId: 'timed-event-${widget.gameId}-$quarter',
+          title: 'イベント発生',
+          body: '新しいイベントミッションが届きました。マップで詳細を確認してください。',
+        );
+        break;
+      }
+    }
+  }
+
+  void _handleTimedEventPopupDismissed() {
+    if (!_showTimedEventPopup && _activeTimedEvent == null) {
+      return;
+    }
+    setState(_clearTimedEventPopupState);
   }
 
   Future<void> _initializeKodouPlayer() async {
@@ -1168,6 +1275,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     required Game? game,
     required bool allPinsCleared,
     required bool allRunnersDown,
+    required int? runningRemainingSeconds,
     required int? pinCount,
   }) {
     if (game?.status != GameStatus.running) {
@@ -1176,6 +1284,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     final result = _autoGameEndResult(
       allPinsCleared: allPinsCleared,
       allRunnersDown: allRunnersDown,
+      runningRemainingSeconds: runningRemainingSeconds,
     );
     if (result == null) {
       return;
@@ -1190,15 +1299,18 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   GameEndResult? _autoGameEndResult({
     required bool allPinsCleared,
     required bool allRunnersDown,
+    required int? runningRemainingSeconds,
   }) {
-    if (!allPinsCleared && !allRunnersDown) {
-      return null;
-    }
     if (allPinsCleared) {
       return GameEndResult.runnerVictory;
     }
     if (allRunnersDown) {
       return GameEndResult.oniVictory;
+    }
+    final isTimeExpired =
+        runningRemainingSeconds != null && runningRemainingSeconds <= 0;
+    if (isTimeExpired) {
+      return GameEndResult.draw;
     }
     return null;
   }
@@ -2603,6 +2715,132 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     return '${secs}秒';
   }
 
+  _TimedEventPopupData _buildTimedEventPopupData({
+    required int quarterIndex,
+    required int totalDurationSeconds,
+    required List<Player>? players,
+  }) {
+    final totalRunnerCount = _countTotalRunners(players);
+    final requiredRunners =
+        _resolveTimedEventRequiredRunners(totalRunnerCount);
+    final percentProgress = quarterIndex * 25;
+    final computedSeconds =
+        (totalDurationSeconds / 4 * quarterIndex).round();
+    final eventSeconds = math.max(
+      0,
+      math.min(computedSeconds, totalDurationSeconds),
+    );
+    final eventTimeLabel = _formatTimedEventTimeMark(eventSeconds);
+    final quarterLabel = _quarterLabelForIndex(quarterIndex);
+    final slides = _buildTimedEventSlides(
+      quarterLabel: quarterLabel,
+      percentProgress: percentProgress,
+      eventTimeLabel: eventTimeLabel,
+      requiredRunners: requiredRunners,
+      timeLimitMinutes: _timedEventTimeLimitMinutes,
+      totalRunnerCount: totalRunnerCount,
+    );
+    return _TimedEventPopupData(
+      quarterIndex: quarterIndex,
+      quarterLabel: quarterLabel,
+      percentProgress: percentProgress,
+      eventTimeLabel: eventTimeLabel,
+      requiredRunners: requiredRunners,
+      timeLimitMinutes: _timedEventTimeLimitMinutes,
+      totalRunnerCount: totalRunnerCount,
+      slides: slides,
+    );
+  }
+
+  List<_TimedEventSlideData> _buildTimedEventSlides({
+    required String quarterLabel,
+    required int percentProgress,
+    required String eventTimeLabel,
+    required int requiredRunners,
+    required int timeLimitMinutes,
+    required int totalRunnerCount,
+  }) {
+    final runnerCountLabel =
+        totalRunnerCount > 0 ? '$totalRunnerCount人' : '不明';
+    final timeLimitLabel = '$timeLimitMinutes分';
+    return [
+      _TimedEventSlideData(
+        title: '$quarterLabelの進行状況',
+        description:
+            'ゲーム時間の$percentProgress%（開始から$eventTimeLabel）に到達しました。'
+            'このタイミングで「イベント発生」フェーズが始まり、マップには今回のターゲットとなる発電所が明示されます。'
+            'プレイヤー全員で場所を確認し、次のミッション達成に備えてください。',
+      ),
+      _TimedEventSlideData(
+        title: '逃走者のミッション',
+        description:
+            '逃走者チームは$timeLimitLabel以内に、少なくとも${requiredRunners}人が同じ発電所を同時に解除する必要があります。'
+            '現在の逃走者数は$runnerCountLabelです。解除を担当するメンバーと警戒を担当するメンバーを分け、'
+            'マップに示された対象発電所を守りながら安全にカウントダウンを完了させましょう。',
+      ),
+      _TimedEventSlideData(
+        title: '達成できなかった場合',
+        description:
+            '制限時間内に${requiredRunners}人の解除が達成できないと、鬼の捕獲半径が次のイベントまで2倍に拡大します。'
+            '鬼は広い範囲から逃走者を捕捉できるようになるため、解除が難しそうな場合でも粘り強く連携し、'
+            'リスクを最小限に抑えてイベントを乗り切ってください。',
+      ),
+    ];
+  }
+
+  String _quarterLabelForIndex(int quarterIndex) {
+    switch (quarterIndex) {
+      case 1:
+        return '第1フェーズ';
+      case 2:
+        return '第2フェーズ';
+      case 3:
+        return '最終フェーズ';
+      default:
+        return 'イベント';
+    }
+  }
+
+  String _formatTimedEventTimeMark(int seconds) {
+    if (seconds <= 0) {
+      return '直後';
+    }
+    final hours = seconds ~/ 3600;
+    final minutes = (seconds % 3600) ~/ 60;
+    if (hours > 0) {
+      if (minutes == 0) {
+        return '${hours}時間';
+      }
+      return '${hours}時間${minutes}分';
+    }
+    if (minutes > 0) {
+      return '${minutes}分';
+    }
+    return '${seconds % 60}秒';
+  }
+
+  int _countTotalRunners(List<Player>? players) {
+    if (players == null || players.isEmpty) {
+      return 0;
+    }
+    var count = 0;
+    for (final player in players) {
+      if (player.role == PlayerRole.runner) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  int _resolveTimedEventRequiredRunners(int totalRunnerCount) {
+    if (totalRunnerCount <= 0) {
+      return _timedEventDefaultRequiredRunners;
+    }
+    final capped =
+        math.min(totalRunnerCount, _timedEventDefaultRequiredRunners);
+    return math.max(1, capped);
+  }
+
   GameEndResult? _resolveGameEndResult({
     required Game? game,
     required bool allPinsCleared,
@@ -2868,6 +3106,278 @@ class _GameSummaryPopup extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TimedEventPopup extends StatefulWidget {
+  const _TimedEventPopup({
+    required this.data,
+    required this.onClose,
+  });
+
+  final _TimedEventPopupData data;
+  final VoidCallback onClose;
+
+  @override
+  State<_TimedEventPopup> createState() => _TimedEventPopupState();
+}
+
+class _TimedEventPopupState extends State<_TimedEventPopup> {
+  final PageController _pageController = PageController();
+  int _currentPage = 0;
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _handleBack() {
+    if (_currentPage == 0) return;
+    _pageController.previousPage(
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void _handleNext() {
+    final isLastPage = _currentPage == widget.data.slides.length - 1;
+    if (isLastPage) {
+      widget.onClose();
+      return;
+    }
+    _pageController.nextPage(
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final slides = widget.data.slides;
+    return Material(
+      color: Colors.transparent,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: theme.dialogBackgroundColor,
+          borderRadius: BorderRadius.circular(28),
+        ),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'イベント発生',
+                  style: theme.textTheme.titleLarge
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '${widget.data.quarterLabel} · ゲーム経過${widget.data.percentProgress}% '
+                  '（開始から${widget.data.eventTimeLabel}）',
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.hintColor),
+                ),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: [
+                      _TimedEventInfoChip(
+                        label: '必要人数',
+                        value: '${widget.data.requiredRunners}人',
+                      ),
+                      _TimedEventInfoChip(
+                        label: '制限時間',
+                        value: '${widget.data.timeLimitMinutes}分',
+                      ),
+                      if (widget.data.totalRunnerCount > 0)
+                        _TimedEventInfoChip(
+                          label: '逃走者',
+                          value: '${widget.data.totalRunnerCount}人',
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: 360,
+                  child: PageView.builder(
+                    controller: _pageController,
+                    itemCount: slides.length,
+                    onPageChanged: (index) {
+                      setState(() {
+                        _currentPage = index;
+                      });
+                    },
+                    itemBuilder: (context, index) {
+                      final slide = slides[index];
+                      return _TimedEventSlide(slide: slide);
+                    },
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(slides.length, (index) {
+                    final isActive = index == _currentPage;
+                    final color = isActive
+                        ? theme.colorScheme.primary
+                        : theme.dividerColor;
+                    return AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      margin: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 8,
+                      ),
+                      height: 8,
+                      width: isActive ? 24 : 8,
+                      decoration: BoxDecoration(
+                        color: color,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    );
+                  }),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    TextButton(
+                      onPressed: _currentPage == 0 ? null : _handleBack,
+                      child: const Text('戻る'),
+                    ),
+                    const Spacer(),
+                    ElevatedButton(
+                      onPressed: _handleNext,
+                      child: Text(
+                        _currentPage == slides.length - 1 ? '閉じる' : '次へ',
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TimedEventPopupData {
+  const _TimedEventPopupData({
+    required this.quarterIndex,
+    required this.quarterLabel,
+    required this.percentProgress,
+    required this.eventTimeLabel,
+    required this.requiredRunners,
+    required this.timeLimitMinutes,
+    required this.totalRunnerCount,
+    required this.slides,
+  });
+
+  final int quarterIndex;
+  final String quarterLabel;
+  final int percentProgress;
+  final String eventTimeLabel;
+  final int requiredRunners;
+  final int timeLimitMinutes;
+  final int totalRunnerCount;
+  final List<_TimedEventSlideData> slides;
+}
+
+class _TimedEventSlideData {
+  const _TimedEventSlideData({
+    required this.title,
+    required this.description,
+  });
+
+  final String title;
+  final String description;
+}
+
+class _TimedEventSlide extends StatelessWidget {
+  const _TimedEventSlide({required this.slide});
+
+  final _TimedEventSlideData slide;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final borderColor = theme.dividerColor.withOpacity(0.7);
+    final fillColor = theme.colorScheme.surfaceVariant.withOpacity(
+      theme.brightness == Brightness.dark ? 0.35 : 0.65,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          slide.title,
+          style: theme.textTheme.titleMedium
+              ?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 12),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: Container(
+            height: 160,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: fillColor,
+              border: Border.all(color: borderColor),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Expanded(
+          child: SingleChildScrollView(
+            child: Text(
+              slide.description,
+              style: theme.textTheme.bodyMedium,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TimedEventInfoChip extends StatelessWidget {
+  const _TimedEventInfoChip({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final background = theme.colorScheme.surfaceVariant.withOpacity(
+      theme.brightness == Brightness.dark ? 0.45 : 0.85,
+    );
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: theme.dividerColor.withOpacity(0.5)),
+      ),
+      child: Text(
+        '$label: $value',
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+          fontFeatures: const [FontFeature.tabularFigures()],
         ),
       ),
     );

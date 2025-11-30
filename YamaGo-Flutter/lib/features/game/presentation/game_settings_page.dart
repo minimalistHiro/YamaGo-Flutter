@@ -205,7 +205,7 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
               .clamp(0, 24 * 60 * 60);
       final gameDurationMinutes =
           ((game.gameDurationSec ?? (_defaultGameDurationMinutes * 60)) / 60)
-              .clamp(10, 480)
+              .clamp(1, 480)
               .toDouble();
       setState(() {
         _pinCount = (game.pinCount ?? _defaultPinCount).clamp(1, 20).toDouble();
@@ -296,7 +296,7 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
   Widget _buildGameDurationCard() {
     final normalizedMinutes =
         _gameDurationMinutes.isFinite ? _gameDurationMinutes.round() : 120;
-    final totalMinutes = _clampInt(normalizedMinutes, 10, 480);
+    final totalMinutes = _clampInt(normalizedMinutes, 1, 480);
     final hours = totalMinutes ~/ 60;
     final minutes = totalMinutes % 60;
     final hourOptions = List<int>.generate(9, (index) => index);
@@ -368,7 +368,7 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
             const SizedBox(height: 8),
             const Text(
               'ゲーム開始から終了までの制限時間です。'
-              '10分〜8時間の範囲で指定できます（推奨: 120分）。',
+              '1分〜8時間の範囲で指定できます（推奨: 120分）。',
               style: TextStyle(fontSize: 12),
             ),
           ],
@@ -672,7 +672,7 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
       final pinCountChanged =
           previousPinCount != null && previousPinCount != newPinCount;
       final normalizedGameMinutes =
-          _clampInt(_gameDurationMinutes.round(), 10, 480);
+          _clampInt(_gameDurationMinutes.round(), 1, 480);
       final normalizedGeneratorSeconds =
           _clampInt(_generatorClearDurationSeconds.round(), 10, _maxGeneratorClearSeconds);
       final settings = GameSettingsInput(
@@ -747,7 +747,7 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
   }
 
   List<int> _gameDurationMinuteOptions(int hours) {
-    final minMinutes = hours == 0 ? 10 : 0;
+    final minMinutes = hours == 0 ? 1 : 0;
     final remaining = 480 - hours * 60;
     final maxMinutes = remaining <= 0
         ? 0
@@ -762,13 +762,13 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
   }
 
   int _normalizeGameDurationMinutes(int hours, int minutes) {
-    final minMinutes = hours == 0 ? 10 : 0;
+    final minMinutes = hours == 0 ? 1 : 0;
     final remaining = 480 - hours * 60;
     final maxMinutes = remaining <= 0
         ? 0
         : (remaining >= 59 ? 59 : remaining);
     final safeMinutes = _clampInt(minutes, minMinutes, maxMinutes);
-    return _clampInt(hours * 60 + safeMinutes, 10, 480);
+    return _clampInt(hours * 60 + safeMinutes, 1, 480);
   }
 
   void _updateGameDuration(int hours, int minutes) {
