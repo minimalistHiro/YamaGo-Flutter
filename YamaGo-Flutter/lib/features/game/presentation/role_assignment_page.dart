@@ -272,6 +272,7 @@ class _RoleAssignmentPageState extends ConsumerState<RoleAssignmentPage> {
     required int oniCount,
     required int runnerCount,
   }) {
+    final canRandomize = oniCount > 0 && runnerCount > 0;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -287,10 +288,26 @@ class _RoleAssignmentPageState extends ConsumerState<RoleAssignmentPage> {
               '現在の鬼 $oniCount 人 / 逃走者 $runnerCount 人のバランスは維持したまま、役職をランダムに再割り当てします。',
               style: Theme.of(context).textTheme.bodySmall,
             ),
+            if (!canRandomize) ...[
+              const SizedBox(height: 12),
+              Text(
+                '鬼と逃走者が最低1人ずついる時のみシャッフルできます。',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+              ),
+            ],
             const SizedBox(height: 12),
             ElevatedButton.icon(
-              onPressed:
-                  _isProcessing ? null : () => _confirmRandomize(players),
+              onPressed: !_isProcessing && canRandomize
+                  ? () => _confirmRandomize(players)
+                  : null,
+              style: ElevatedButton.styleFrom(
+                shape: const StadiumBorder(),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                textStyle: const TextStyle(fontWeight: FontWeight.bold),
+              ),
               icon: const Icon(Icons.shuffle),
               label: const Text('ランダムに振り分け'),
             ),
@@ -387,6 +404,17 @@ class _RoleAssignmentPageState extends ConsumerState<RoleAssignmentPage> {
     if (_isProcessing || players.isEmpty) return;
     final oniCount =
         players.where((player) => player.role == PlayerRole.oni).length;
+    final runnerCount = players.length - oniCount;
+    if (oniCount == 0 || runnerCount == 0) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('鬼と逃走者が最低1人ずつ必要です'),
+          ),
+        );
+      }
+      return;
+    }
     final shuffled = List<Player>.from(players)..shuffle(math.Random());
     final updates = <({String uid, PlayerRole role})>[];
     for (var i = 0; i < shuffled.length; i++) {
