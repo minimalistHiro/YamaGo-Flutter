@@ -6,8 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:yamago_flutter/core/location/location_service.dart';
 import 'package:yamago_flutter/core/location/yamanote_constants.dart';
@@ -2969,7 +2967,6 @@ class GameChatSection extends ConsumerStatefulWidget {
 }
 
 class _GameChatSectionState extends ConsumerState<GameChatSection> {
-  static const _chatTutorialSeenKey = 'chat.tutorial.seen';
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
   final FocusNode _composerFocusNode = FocusNode();
@@ -2979,12 +2976,11 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
   bool _hasAutoScrolledToBottom = false;
   bool _isUserNearBottom = true;
   bool _isChatTutorialVisible = false;
-  bool _isCheckingTutorialStatus = false;
   bool _hasCompletedChatTutorial = false;
+  bool _chatTutorialStartPending = false;
   _ChatTutorialStep? _currentTutorialStep;
   Rect? _composerHighlightRect;
   Rect? _headerHighlightRect;
-  SharedPreferences? _sharedPreferences;
   ProviderSubscription<int>? _tabIndexSubscription;
 
   @override
@@ -3224,22 +3220,19 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
     if (!mounted ||
         _isChatTutorialVisible ||
         _hasCompletedChatTutorial ||
-        _isCheckingTutorialStatus) {
+        _chatTutorialStartPending) {
       return;
     }
-    _isCheckingTutorialStatus = true;
-    try {
-      final prefs =
-          _sharedPreferences ??= await SharedPreferences.getInstance();
-      final alreadySeen = prefs.getBool(_chatTutorialSeenKey) ?? false;
-      if (alreadySeen) {
-        _hasCompletedChatTutorial = true;
+    _chatTutorialStartPending = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _chatTutorialStartPending = false;
+      if (!mounted ||
+          _isChatTutorialVisible ||
+          _hasCompletedChatTutorial) {
         return;
       }
       _startChatTutorial();
-    } finally {
-      _isCheckingTutorialStatus = false;
-    }
+    });
   }
 
   void _startChatTutorial() {
@@ -3313,9 +3306,6 @@ class _GameChatSectionState extends ConsumerState<GameChatSection> {
     });
     _composerFocusNode.unfocus();
     _hasCompletedChatTutorial = true;
-    final prefs =
-        _sharedPreferences ??= await SharedPreferences.getInstance();
-    await prefs.setBool(_chatTutorialSeenKey, true);
   }
 
   Rect? get _activeTutorialRect {
