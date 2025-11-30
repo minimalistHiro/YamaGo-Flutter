@@ -73,7 +73,10 @@ class _GameShellPageState extends ConsumerState<GameShellPage> {
   @override
   void initState() {
     super.initState();
-    ref.read(gameShellTabIndexProvider.notifier).state = _currentIndex;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(gameShellTabIndexProvider.notifier).state = _currentIndex;
+    });
     unawaited(_ensureSignedIn());
     final pushService = ref.read(pushNotificationServiceProvider);
     unawaited(pushService.initialize());
