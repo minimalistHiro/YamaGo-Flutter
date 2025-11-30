@@ -5555,10 +5555,18 @@ class _TutorialSlide extends StatelessWidget {
               color: fillColor,
               border: Border.all(color: borderColor),
             ),
-            child: Image.asset(
-              slide.assetPath,
-              fit: BoxFit.cover,
-            ),
+            child: slide.showWarningIcon
+                ? Center(
+                    child: Icon(
+                      Icons.warning_amber_rounded,
+                      color: theme.colorScheme.error,
+                      size: 96,
+                    ),
+                  )
+                : Image.asset(
+                    slide.assetPath,
+                    fit: BoxFit.cover,
+                  ),
           ),
         ),
         const SizedBox(height: 16),
@@ -5580,11 +5588,13 @@ class _GameTutorialSlideData {
     required this.title,
     required this.description,
     required this.assetPath,
+    this.showWarningIcon = false,
   });
 
   final String title;
   final String description;
   final String assetPath;
+  final bool showWarningIcon;
 }
 
 const List<_GameTutorialSlideData> _tutorialSlides = [
@@ -5622,5 +5632,13 @@ const List<_GameTutorialSlideData> _tutorialSlides = [
         'スタート後は鬼が動けるようになるまでカウントダウンが走り、その間に逃走者は素早く散開しましょう。'
         '設定画面ではルールやタイマーなどの各種設定を調整できます。',
     assetPath: 'assets/tutorial/page5.png',
+  ),
+  _GameTutorialSlideData(
+    title: 'ゲーム終了後の注意',
+    description:
+        'ゲームが終わったら必ず設定画面のログアウトボタンからログアウトしてください。'
+        'ログアウトしないままだと位置情報の共有が継続してしまうため注意が必要です。',
+    assetPath: '',
+    showWarningIcon: true,
   ),
 ];
