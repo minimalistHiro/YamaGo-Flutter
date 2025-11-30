@@ -5598,15 +5598,15 @@ const List<_GameTutorialSlideData> _tutorialSlides = [
   _GameTutorialSlideData(
     title: '鬼のミッション',
     description:
-        '鬼役はすべての逃走者を捕獲できれば勝ちです。マップで位置を確認しつつ、'
-        '連絡を取り合って逃走者の退路をふさぎ、少しずつ包囲していきましょう。',
+        '鬼役はすべての逃走者を捕獲できれば勝ちです。捕獲範囲内に逃走者がいると捕まえられるので、'
+        'マップで位置を確認しつつ連絡を取り合い、退路をふさぎながら少しずつ包囲していきましょう。',
     assetPath: 'assets/tutorial/page2.png',
   ),
   _GameTutorialSlideData(
     title: '逃走者と発電機',
     description:
-        '逃走者はマップ上の発電機をすべて解除すると勝利します。解除中は同じ場所に'
-        '一定時間とどまる必要があり、解除開始と同時に鬼へ通知されるため仲間の警戒が重要です。',
+        '逃走者はマップ上の発電機をすべて解除すると勝利します。捕獲範囲内に発電機があると解除開始が可能で、'
+        '解除中は同じ場所に一定時間とどまる必要があり、解除開始と同時に鬼へ通知されるため仲間の警戒が重要です。',
     assetPath: 'assets/tutorial/page3.png',
   ),
   _GameTutorialSlideData(
