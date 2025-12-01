@@ -356,6 +356,161 @@ exports.notifyInactivePlayersOnGameStart = functions
     return null;
   });
 
+exports.onTimedEventCreated = functions
+  .region('us-central1')
+  .firestore.document('games/{gameId}/events/{eventId}')
+  .onCreate(async (snapshot, context) => {
+    const data = snapshot.data();
+    if (!data || data.type !== 'timed_event') {
+      return null;
+    }
+
+    const { gameId } = context.params;
+    const quarter = toInt(data.quarter ?? data.quarterIndex);
+    const requiredRunners = toInt(data.requiredRunners);
+    const durationSeconds = toInt(data.eventDurationSeconds);
+
+    try {
+      const playersSnapshot = await db
+        .collection('games')
+        .doc(gameId)
+        .collection('players')
+        .get();
+
+      if (playersSnapshot.empty) {
+        functions.logger.info('No players for timed event notification', {
+          gameId,
+        });
+        return null;
+      }
+
+      const tokens = [];
+      const tokenOwners = new Map();
+      playersSnapshot.forEach((doc) => {
+        const playerData = doc.data() || {};
+        const playerTokens = playerData.fcmTokens;
+        if (!Array.isArray(playerTokens)) {
+          return;
+        }
+        playerTokens.forEach((token) => {
+          if (typeof token === 'string' && token.length > 0) {
+            tokens.push(token);
+            if (!tokenOwners.has(token)) {
+              tokenOwners.set(token, doc.id);
+            }
+          }
+        });
+      });
+
+      if (tokens.length === 0) {
+        functions.logger.info('No tokens for timed event notification', {
+          gameId,
+        });
+        return null;
+      }
+
+      const quarterLabel = getQuarterLabel(quarter);
+      const durationLabel = formatDurationLabel(durationSeconds);
+      const bodySegments = [
+        `${quarterLabel}のイベントが発生しました。`,
+      ];
+      if (requiredRunners > 0 && durationLabel) {
+        bodySegments.push(
+          `${durationLabel}以内に${requiredRunners}人で発電所を解除してください。`
+        );
+      } else {
+        bodySegments.push('アプリを開いてマップを確認してください。');
+      }
+
+      const notification = {
+        title: 'イベント発生',
+        body: bodySegments.join(' '),
+      };
+      const dataPayload = {
+        type: 'timed_event',
+        gameId,
+        quarter: quarter.toString(),
+      };
+
+      const invalidTokens = new Set();
+      const chunkSize = 500;
+      for (let i = 0; i < tokens.length; i += chunkSize) {
+        const chunk = tokens.slice(i, i + chunkSize);
+        try {
+          functions.logger.info('Sending timed event notification batch', {
+            gameId,
+            batchSize: chunk.length,
+          });
+          const response = await messaging.sendEachForMulticast({
+            tokens: chunk,
+            notification,
+            data: dataPayload,
+            android: {
+              priority: 'high',
+              notification: {
+                sound: 'default',
+                channelId: 'map_events',
+              },
+            },
+            apns: {
+              headers: {
+                'apns-priority': '10',
+                'apns-push-type': 'alert',
+              },
+              payload: {
+                aps: {
+                  alert: notification,
+                  sound: 'default',
+                  category: 'TIMED_EVENT',
+                },
+              },
+            },
+          });
+          response.responses.forEach((res, idx) => {
+            if (!res.success) {
+              const code = res.error?.code || '';
+              if (
+                code === 'messaging/registration-token-not-registered' ||
+                code === 'messaging/invalid-registration-token'
+              ) {
+                invalidTokens.add(chunk[idx]);
+              } else {
+                functions.logger.error(
+                  'Timed event notification delivery failed',
+                  {
+                    code,
+                    error: res.error,
+                    token: chunk[idx],
+                    gameId,
+                  }
+                );
+              }
+            }
+          });
+        } catch (error) {
+          functions.logger.error(
+            'Failed to send timed event notification batch',
+            {
+              error,
+              gameId,
+            }
+          );
+        }
+      }
+
+      if (invalidTokens.size > 0) {
+        await removeInvalidTokens(gameId, invalidTokens, tokenOwners);
+      }
+    } catch (error) {
+      functions.logger.error('Timed event notification handling failed', {
+        error,
+        gameId,
+      });
+    }
+
+    return null;
+  });
+
 async function removeInvalidTokens(gameId, invalidTokens, tokenOwners) {
   const removals = [];
   invalidTokens.forEach((token) => {
@@ -515,4 +670,41 @@ function convertToDate(value) {
     }
   }
   return null;
+}
+
+function toInt(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+  return Math.trunc(parsed);
+}
+
+function formatDurationLabel(seconds) {
+  const duration = Math.max(0, toInt(seconds));
+  if (duration === 0) {
+    return '';
+  }
+  const minutes = Math.floor(duration / 60);
+  const remainingSeconds = duration % 60;
+  if (minutes > 0 && remainingSeconds > 0) {
+    return `${minutes}分${remainingSeconds}秒`;
+  }
+  if (minutes > 0) {
+    return `${minutes}分`;
+  }
+  return `${remainingSeconds}秒`;
+}
+
+function getQuarterLabel(quarter) {
+  switch (quarter) {
+    case 1:
+      return '第1フェーズ';
+    case 2:
+      return '第2フェーズ';
+    case 3:
+      return '最終フェーズ';
+    default:
+      return 'イベント';
+  }
 }

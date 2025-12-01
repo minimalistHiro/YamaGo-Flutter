@@ -26,6 +26,7 @@ import 'package:yamago_flutter/features/chat/domain/chat_message.dart';
 import 'package:yamago_flutter/features/game/application/player_location_updater.dart';
 import 'package:yamago_flutter/features/game/application/player_providers.dart';
 import 'package:yamago_flutter/features/game/data/capture_repository.dart';
+import 'package:yamago_flutter/features/game/data/game_event_repository.dart';
 import 'package:yamago_flutter/features/game/data/rescue_repository.dart';
 import 'package:yamago_flutter/features/game/data/game_repository.dart';
 import 'package:yamago_flutter/features/game/data/player_repository.dart';
@@ -301,9 +302,9 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   final Set<int> _triggeredTimedEventQuarters = <int>{};
   DateTime? _currentGameStartAt;
   int? _pendingTimedEventQuarter;
+  final math.Random _timedEventRandom = math.Random();
   static const int _defaultGameDurationSeconds = 7200;
   static const int _timedEventDefaultRequiredRunners = 3;
-  static const int _timedEventTimeLimitMinutes = 5;
 
   @override
   void initState() {
@@ -1094,6 +1095,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
             _pendingTimedEventQuarter = null;
           });
         });
+        _recordTimedEventTrigger(popupData);
         _maybeNotifyMapPopup(
           notificationId: 'timed-event-${widget.gameId}-$quarter',
           title: 'イベント発生',
@@ -1109,6 +1111,26 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       return;
     }
     setState(_clearTimedEventPopupState);
+  }
+
+  void _recordTimedEventTrigger(_TimedEventPopupData data) {
+    final repo = ref.read(gameEventRepositoryProvider);
+    unawaited(
+      repo
+          .recordTimedEventTrigger(
+        gameId: widget.gameId,
+        quarterIndex: data.quarterIndex,
+        requiredRunners: data.requiredRunners,
+        eventDurationSeconds: data.eventDurationSeconds,
+        percentProgress: data.percentProgress,
+        eventTimeLabel: data.eventTimeLabel,
+        totalRunnerCount: data.totalRunnerCount,
+      )
+          .catchError((error, stackTrace) {
+        debugPrint('Failed to record timed event trigger: $error');
+        debugPrint('$stackTrace');
+      }),
+    );
   }
 
   Future<void> _initializeKodouPlayer() async {
@@ -2723,6 +2745,10 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     final totalRunnerCount = _countTotalRunners(players);
     final requiredRunners =
         _resolveTimedEventRequiredRunners(totalRunnerCount);
+    final eventDurationSeconds =
+        math.max(1, (totalDurationSeconds / 8).round());
+    final eventDurationLabel =
+        _formatEventDurationLabel(eventDurationSeconds);
     final percentProgress = quarterIndex * 25;
     final computedSeconds =
         (totalDurationSeconds / 4 * quarterIndex).round();
@@ -2737,7 +2763,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       percentProgress: percentProgress,
       eventTimeLabel: eventTimeLabel,
       requiredRunners: requiredRunners,
-      timeLimitMinutes: _timedEventTimeLimitMinutes,
+      eventDurationLabel: eventDurationLabel,
       totalRunnerCount: totalRunnerCount,
     );
     return _TimedEventPopupData(
@@ -2746,7 +2772,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       percentProgress: percentProgress,
       eventTimeLabel: eventTimeLabel,
       requiredRunners: requiredRunners,
-      timeLimitMinutes: _timedEventTimeLimitMinutes,
+      eventDurationSeconds: eventDurationSeconds,
+      eventDurationLabel: eventDurationLabel,
       totalRunnerCount: totalRunnerCount,
       slides: slides,
     );
@@ -2757,12 +2784,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     required int percentProgress,
     required String eventTimeLabel,
     required int requiredRunners,
-    required int timeLimitMinutes,
+    required String eventDurationLabel,
     required int totalRunnerCount,
   }) {
     final runnerCountLabel =
         totalRunnerCount > 0 ? '$totalRunnerCount人' : '不明';
-    final timeLimitLabel = '$timeLimitMinutes分';
     return [
       _TimedEventSlideData(
         title: '$quarterLabelの進行状況',
@@ -2774,7 +2800,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       _TimedEventSlideData(
         title: '逃走者のミッション',
         description:
-            '逃走者チームは$timeLimitLabel以内に、少なくとも${requiredRunners}人が同じ発電所を同時に解除する必要があります。'
+            '逃走者チームは$eventDurationLabel以内に、少なくとも${requiredRunners}人が同じ発電所を同時に解除する必要があります。'
             '現在の逃走者数は$runnerCountLabelです。解除を担当するメンバーと警戒を担当するメンバーを分け、'
             'マップに示された対象発電所を守りながら安全にカウントダウンを完了させましょう。',
       ),
@@ -2819,13 +2845,28 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     return '${seconds % 60}秒';
   }
 
+  String _formatEventDurationLabel(int seconds) {
+    if (seconds <= 0) {
+      return '---';
+    }
+    final minutes = seconds ~/ 60;
+    final secs = seconds % 60;
+    if (minutes > 0 && secs > 0) {
+      return '${minutes}分${secs}秒';
+    }
+    if (minutes > 0) {
+      return '${minutes}分';
+    }
+    return '${secs}秒';
+  }
+
   int _countTotalRunners(List<Player>? players) {
     if (players == null || players.isEmpty) {
       return 0;
     }
     var count = 0;
     for (final player in players) {
-      if (player.role == PlayerRole.runner) {
+      if (player.role == PlayerRole.runner && player.isActive) {
         count++;
       }
     }
@@ -2836,9 +2877,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     if (totalRunnerCount <= 0) {
       return _timedEventDefaultRequiredRunners;
     }
-    final capped =
-        math.min(totalRunnerCount, _timedEventDefaultRequiredRunners);
-    return math.max(1, capped);
+    return _timedEventRandom.nextInt(totalRunnerCount) + 1;
   }
 
   GameEndResult? _resolveGameEndResult({
@@ -3198,7 +3237,7 @@ class _TimedEventPopupState extends State<_TimedEventPopup> {
                       ),
                       _TimedEventInfoChip(
                         label: '制限時間',
-                        value: '${widget.data.timeLimitMinutes}分',
+                        value: widget.data.eventDurationLabel,
                       ),
                       if (widget.data.totalRunnerCount > 0)
                         _TimedEventInfoChip(
@@ -3280,7 +3319,8 @@ class _TimedEventPopupData {
     required this.percentProgress,
     required this.eventTimeLabel,
     required this.requiredRunners,
-    required this.timeLimitMinutes,
+    required this.eventDurationSeconds,
+    required this.eventDurationLabel,
     required this.totalRunnerCount,
     required this.slides,
   });
@@ -3290,7 +3330,8 @@ class _TimedEventPopupData {
   final int percentProgress;
   final String eventTimeLabel;
   final int requiredRunners;
-  final int timeLimitMinutes;
+  final int eventDurationSeconds;
+  final String eventDurationLabel;
   final int totalRunnerCount;
   final List<_TimedEventSlideData> slides;
 }

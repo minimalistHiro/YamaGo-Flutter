@@ -20,6 +20,49 @@ class GameEventRepository {
       return snapshot.docs.map((doc) => GameEvent.fromFirestore(doc)).toList();
     });
   }
+
+  Future<bool> recordTimedEventTrigger({
+    required String gameId,
+    required int quarterIndex,
+    required int requiredRunners,
+    required int eventDurationSeconds,
+    required int percentProgress,
+    required String eventTimeLabel,
+    required int totalRunnerCount,
+  }) {
+    final gameRef = _firestore.collection('games').doc(gameId);
+    return _firestore.runTransaction<bool>((transaction) async {
+      final snapshot = await transaction.get(gameRef);
+      if (!snapshot.exists) {
+        return false;
+      }
+      final data = snapshot.data();
+      final triggered = <int>{
+        for (final value in (data?['timedEventQuarters'] as List<dynamic>? ??
+            const <dynamic>[]))
+          if (value is num) value.toInt(),
+      };
+      if (triggered.contains(quarterIndex)) {
+        return false;
+      }
+      transaction.update(gameRef, {
+        'timedEventQuarters': FieldValue.arrayUnion([quarterIndex]),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      final eventRef = gameRef.collection('events').doc();
+      transaction.set(eventRef, {
+        'type': 'timed_event',
+        'quarter': quarterIndex,
+        'requiredRunners': requiredRunners,
+        'eventDurationSeconds': eventDurationSeconds,
+        'percentProgress': percentProgress,
+        'eventTimeLabel': eventTimeLabel,
+        'totalRunnerCount': totalRunnerCount,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+      return true;
+    });
+  }
 }
 
 final gameEventRepositoryProvider = Provider<GameEventRepository>((ref) {

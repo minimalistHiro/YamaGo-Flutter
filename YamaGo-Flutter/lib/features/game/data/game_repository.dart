@@ -124,6 +124,7 @@ class GameRepository {
           ? Timestamp.fromDate(countdownStartAt)
           : FieldValue.serverTimestamp(),
       'countdownDurationSec': durationSeconds,
+      'timedEventQuarters': <int>[],
       'updatedAt': FieldValue.serverTimestamp(),
     };
     if (countdownEndAt != null) {
