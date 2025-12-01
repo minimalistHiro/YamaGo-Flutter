@@ -156,13 +156,12 @@ class _PlayerStatsContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final activePlayers = players.where((p) => p.isActive).toList();
     final totalPlayers = players.length;
     final oniCount =
-        activePlayers.where((p) => p.role == PlayerRole.oni).length;
-    final runnerCount = activePlayers.length - oniCount;
+        players.where((p) => p.role == PlayerRole.oni).length;
+    final runnerCount = totalPlayers - oniCount;
     final downedCount =
-        activePlayers.where((p) => p.status == PlayerStatus.downed).length;
+        players.where((p) => p.status == PlayerStatus.downed).length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
