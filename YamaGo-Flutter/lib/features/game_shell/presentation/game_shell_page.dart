@@ -2875,23 +2875,20 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       _TimedEventSlideData(
         title: '$quarterLabelの進行状況',
         description:
-            'ゲーム時間の$percentProgress%（開始から$eventTimeLabel）に到達しました。'
-            'このタイミングで「イベント発生」フェーズが始まり、マップには今回のターゲットとなる発電所が明示されます。'
-            'プレイヤー全員で場所を確認し、次のミッション達成に備えてください。',
+            'ゲーム時間の$percentProgress%（開始から$eventTimeLabel）でイベントが発生します。'
+            'マップにはターゲット発電所が水色ピンで表示され、逃走者は距離を問わずいつでも確認できます。',
       ),
       _TimedEventSlideData(
         title: '逃走者のミッション',
         description:
-            '逃走者チームは$eventDurationLabel以内に、少なくとも${requiredRunners}人が同じ発電所を同時に解除する必要があります。'
-            '現在の逃走者数は$runnerCountLabelです。解除を担当するメンバーと警戒を担当するメンバーを分け、'
-            'マップに示された対象発電所を守りながら安全にカウントダウンを完了させましょう。',
+            '逃走者チームは$eventDurationLabel以内に${requiredRunners}人同時解除を達成する必要があります。'
+            '現在の逃走者数は$runnerCountLabel。解除担当と警戒担当を素早く決め、対象発電所を守りながらカウントダウンを完了させましょう。',
       ),
       _TimedEventSlideData(
         title: '達成できなかった場合',
         description:
-            '制限時間内に${requiredRunners}人の解除が達成できないと、鬼の捕獲半径が次のイベントまで2倍に拡大します。'
-            '鬼は広い範囲から逃走者を捕捉できるようになるため、解除が難しそうな場合でも粘り強く連携し、'
-            'リスクを最小限に抑えてイベントを乗り切ってください。',
+            '制限時間内に人数を満たせないと鬼の捕獲半径が次のイベントまで2倍に拡大します。'
+            '解除が難しい局面でも連携を切らさず、リスクを最小限に抑えて乗り切ってください。',
       ),
     ];
   }
