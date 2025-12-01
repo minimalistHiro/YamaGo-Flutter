@@ -40,7 +40,7 @@
 
 ## Cloud Functions / 通知
 
-- `functions/` ディレクトリに Firebase Functions（Node.js 20）を追加しました。`onChatMessageCreated` で Firestore の `messages_oni / messages_runner` への書き込みを検知し、同じ役割のプレイヤーへ FCM 通知を送信します。
+- `functions/` ディレクトリに Firebase Functions（Node.js 20）を追加しました。`onChatMessageCreated` で Firestore の `messages_oni / messages_runner` への書き込みを検知し、同じ役割のプレイヤーへ FCM 通知を送信します。`messages_general` については `onGeneralChatMessageCreated` で処理し、ゲーム参加者全員に総合チャットの通知を届けます。
 - `cleanupInactiveGames` は Cloud Scheduler（毎日 03:00 JST）で起動し、30 日間更新が無いゲームドキュメントを自動削除します。`players.updatedAt / joinedAt`、`pins.updatedAt`、`events.createdAt`、チャット `timestamp` などを走査して最後のアクティビティを推定し、閾値より古ければ `recursiveDelete` でサブコレクションごとクリーンアップします。
 - デプロイ前に `cd functions && npm install` を実行してください。ローカルエミュレータでの動作確認や本番デプロイは `firebase deploy --only functions` で行えます。
 - Scheduler の有効化は関数デプロイ時に自動作成されます。初回のみ Cloud Scheduler API を有効化し、必要に応じて `gcloud scheduler jobs list` で `cleanupInactiveGames` の状態を確認してください。

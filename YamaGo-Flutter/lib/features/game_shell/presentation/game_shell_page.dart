@@ -305,6 +305,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   final math.Random _timedEventRandom = math.Random();
   static const int _defaultGameDurationSeconds = 7200;
   static const int _timedEventDefaultRequiredRunners = 3;
+  bool _isClearingTimedEventState = false;
 
   @override
   void initState() {
@@ -445,6 +446,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
 
     final previousGameStatus = _latestGameStatus;
     final game = gameState.valueOrNull;
+    _maybeClearExpiredTimedEvent(game);
     _updatePinClearDuration(game);
     final captureRadius = game?.captureRadiusM?.toDouble();
     _latestCaptureRadiusMeters = captureRadius;
@@ -1129,6 +1131,38 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
           .catchError((error, stackTrace) {
         debugPrint('Failed to record timed event trigger: $error');
         debugPrint('$stackTrace');
+      }),
+    );
+  }
+
+  void _maybeClearExpiredTimedEvent(Game? game) {
+    if (game == null || !game.timedEventActive) {
+      return;
+    }
+    final startedAt = game.timedEventActiveStartedAt;
+    final durationSec = game.timedEventActiveDurationSec;
+    if (startedAt == null || durationSec == null) {
+      return;
+    }
+    final serverTimeService = ref.read(serverTimeServiceProvider);
+    final now = serverTimeService.now();
+    final endsAt = startedAt.add(Duration(seconds: durationSec));
+    if (now.isBefore(endsAt)) {
+      return;
+    }
+    if (_isClearingTimedEventState) {
+      return;
+    }
+    _isClearingTimedEventState = true;
+    final repo = ref.read(gameRepositoryProvider);
+    unawaited(
+      repo
+          .clearTimedEventState(gameId: widget.gameId)
+          .catchError((error, stackTrace) {
+        debugPrint('Failed to clear timed event state: $error');
+        debugPrint('$stackTrace');
+      }).whenComplete(() {
+        _isClearingTimedEventState = false;
       }),
     );
   }

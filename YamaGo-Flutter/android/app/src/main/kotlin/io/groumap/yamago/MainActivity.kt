@@ -1,4 +1,4 @@
-package com.example.yamago_flutter
+package io.groumap.yamago
 
 import io.flutter.embedding.android.FlutterActivity
 

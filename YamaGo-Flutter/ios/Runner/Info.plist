@@ -38,6 +38,12 @@
 	<string>ゲーム中はバックグラウンドでも位置情報を送信し、リアルタイムで追跡できるようにします。</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>山手線リアル鬼ごっこをプレイするために現在地を使用し、他のプレイヤーと共有します。</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>ゲーム体験に必要なデータ同期のためにローカルネットワークを使用します。</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_http._tcp</string>
+	</array>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UIBackgroundModes</key>

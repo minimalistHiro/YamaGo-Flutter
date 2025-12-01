@@ -4,6 +4,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../services/firebase_providers.dart';
+
 class ServerTimeService {
   ServerTimeService(this._firestore);
 
@@ -74,6 +76,7 @@ class ServerTimeService {
 }
 
 final serverTimeServiceProvider = Provider<ServerTimeService>((ref) {
+  ref.watch(firebaseAppProvider);
   final firestore = FirebaseFirestore.instance;
   return ServerTimeService(firestore);
 });

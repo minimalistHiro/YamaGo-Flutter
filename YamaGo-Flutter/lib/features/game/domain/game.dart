@@ -23,6 +23,10 @@ class Game {
     this.killerSeeGeneratorRadiusM,
     this.gameDurationSec,
     this.endResult,
+    this.timedEventActive = false,
+    this.timedEventActiveStartedAt,
+    this.timedEventActiveDurationSec,
+    this.timedEventActiveQuarter,
   });
 
   final String id;
@@ -42,6 +46,10 @@ class Game {
   final int? killerSeeGeneratorRadiusM;
   final int? gameDurationSec;
   final GameEndResult? endResult;
+  final bool timedEventActive;
+  final DateTime? timedEventActiveStartedAt;
+  final int? timedEventActiveDurationSec;
+  final int? timedEventActiveQuarter;
 
   int? get countdownRemainingSeconds {
     if (status != GameStatus.countdown ||
@@ -97,7 +105,41 @@ class Game {
           (data['killerSeeGeneratorRadiusM'] as num?)?.toInt(),
       gameDurationSec: (data['gameDurationSec'] as num?)?.toInt(),
       endResult: parseGameEndResult(data['endResult'] as String?),
+      timedEventActive: data['timedEventActive'] as bool? ?? false,
+      timedEventActiveStartedAt: _toDate(data['timedEventActiveStartedAt']),
+      timedEventActiveDurationSec:
+          (data['timedEventActiveDurationSec'] as num?)?.toInt(),
+      timedEventActiveQuarter:
+          (data['timedEventActiveQuarter'] as num?)?.toInt(),
     );
+  }
+
+  bool isTimedEventActive({DateTime? referenceTime}) {
+    if (!timedEventActive) return false;
+    final startedAt = timedEventActiveStartedAt;
+    final durationSec = timedEventActiveDurationSec;
+    if (startedAt == null || durationSec == null) {
+      return timedEventActive;
+    }
+    final now = referenceTime ?? DateTime.now();
+    final endsAt = startedAt.add(Duration(seconds: durationSec));
+    return now.isBefore(endsAt);
+  }
+
+  int? timedEventRemainingSeconds({DateTime? referenceTime}) {
+    if (!timedEventActive) return null;
+    final startedAt = timedEventActiveStartedAt;
+    final durationSec = timedEventActiveDurationSec;
+    if (startedAt == null || durationSec == null) {
+      return null;
+    }
+    final now = referenceTime ?? DateTime.now();
+    final endsAt = startedAt.add(Duration(seconds: durationSec));
+    final remaining = endsAt.difference(now).inSeconds;
+    if (remaining <= 0) {
+      return 0;
+    }
+    return remaining;
   }
 }
 

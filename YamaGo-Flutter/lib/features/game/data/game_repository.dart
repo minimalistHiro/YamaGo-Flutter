@@ -35,7 +35,11 @@ class GameRepository {
       'status': 'pending',
       'ownerUid': ownerUid,
       'createdAt': FieldValue.serverTimestamp(),
-       'updatedAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+      'timedEventActive': false,
+      'timedEventActiveStartedAt': null,
+      'timedEventActiveDurationSec': null,
+      'timedEventActiveQuarter': null,
       ...defaultSettings.toMap(),
     });
     return docRef.id;
@@ -125,6 +129,10 @@ class GameRepository {
           : FieldValue.serverTimestamp(),
       'countdownDurationSec': durationSeconds,
       'timedEventQuarters': <int>[],
+      'timedEventActive': false,
+      'timedEventActiveStartedAt': null,
+      'timedEventActiveDurationSec': null,
+      'timedEventActiveQuarter': null,
       'updatedAt': FieldValue.serverTimestamp(),
     };
     if (countdownEndAt != null) {
@@ -137,6 +145,10 @@ class GameRepository {
     return _gameCollection.doc(gameId).update({
       'status': 'running',
       'startAt': FieldValue.serverTimestamp(),
+      'timedEventActive': false,
+      'timedEventActiveStartedAt': null,
+      'timedEventActiveDurationSec': null,
+      'timedEventActiveQuarter': null,
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
@@ -148,9 +160,23 @@ class GameRepository {
     await _gameCollection.doc(gameId).update({
       'status': 'ended',
       'endResult': gameEndResultToRawValue(result),
+      'timedEventActive': false,
+      'timedEventActiveStartedAt': null,
+      'timedEventActiveDurationSec': null,
+      'timedEventActiveQuarter': null,
       'updatedAt': FieldValue.serverTimestamp(),
     });
     await _reviveDownedRunners(gameId: gameId);
+  }
+
+  Future<void> clearTimedEventState({required String gameId}) {
+    return _gameCollection.doc(gameId).update({
+      'timedEventActive': false,
+      'timedEventActiveStartedAt': null,
+      'timedEventActiveDurationSec': null,
+      'timedEventActiveQuarter': null,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
   }
 
   Future<void> _reviveDownedRunners({required String gameId}) async {

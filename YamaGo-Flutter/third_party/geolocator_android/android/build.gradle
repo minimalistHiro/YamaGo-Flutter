@@ -1,0 +1,73 @@
+group 'com.baseflow.geolocator'
+version '1.0'
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.0.2'
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: 'com.android.library'
+
+def flutterConfig = project.findProperty("flutter")
+if (flutterConfig == null && rootProject != project && rootProject.hasProperty("flutter")) {
+    flutterConfig = rootProject.findProperty("flutter")
+}
+
+def resolvedCompileSdk = null
+def resolvedMinSdk = null
+if (flutterConfig != null) {
+    try {
+        resolvedCompileSdk = flutterConfig.compileSdkVersion
+        resolvedMinSdk = flutterConfig.minSdkVersion
+    } catch (ignored) {
+        if (flutterConfig instanceof Map) {
+            resolvedCompileSdk = flutterConfig["compileSdkVersion"]
+            resolvedMinSdk = flutterConfig["minSdkVersion"]
+        }
+    }
+}
+
+def fallbackCompileSdk = 35
+def fallbackMinSdk = 21
+def compileSdkVersionToUse = (resolvedCompileSdk instanceof Number ? resolvedCompileSdk.intValue() : fallbackCompileSdk)
+def minSdkVersionToUse = (resolvedMinSdk instanceof Number ? resolvedMinSdk.intValue() : fallbackMinSdk)
+
+android {
+    if (project.android.hasProperty("namespace")) {
+        namespace("com.baseflow.geolocator")
+    }
+
+    compileSdk compileSdkVersionToUse
+
+    defaultConfig {
+        minSdkVersion minSdkVersionToUse
+    }
+    lintOptions {
+        disable 'InvalidPackage'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    implementation 'com.google.android.gms:play-services-location:21.2.0'
+    implementation 'androidx.core:core:1.13.0'
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.mockito:mockito-core:5.1.1'
+}

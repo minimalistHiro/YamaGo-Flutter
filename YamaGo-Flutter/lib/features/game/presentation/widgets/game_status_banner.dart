@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/services/firebase_providers.dart';
+import '../../../../core/time/server_time_service.dart';
 import '../../domain/game.dart';
 import '../../../game/application/game_control_controller.dart';
 
@@ -30,11 +31,23 @@ class GameStatusBanner extends ConsumerWidget {
         final isOwner = user?.uid == game.ownerUid;
         final actionWidgets =
             isOwner ? _buildActions(context, ref, game) : const <Widget>[];
+        final serverTimeService = ref.watch(serverTimeServiceProvider);
+        final now = serverTimeService.now();
+        final bool isEventActive = _isTimedEventActive(
+          game,
+          now,
+        );
+        final title =
+            isEventActive ? 'イベント進行中' : _titleForStatus(game.status);
+        final subtitle = isEventActive
+            ? _subtitleForActiveEvent(game, referenceTime: now)
+            : _subtitleForGame(game);
 
         return _BannerCard(
-          title: _titleForStatus(game.status),
-          subtitle: _subtitleForGame(game),
+          title: title,
+          subtitle: subtitle,
           actions: actionWidgets.isEmpty ? null : actionWidgets,
+          highlight: isEventActive,
         );
       },
       loading: () => const _BannerCard(
@@ -80,6 +93,66 @@ class GameStatusBanner extends ConsumerWidget {
     }
   }
 
+  String _subtitleForActiveEvent(
+    Game game, {
+    required DateTime referenceTime,
+  }) {
+    final phaseLabel = _eventPhaseLabel(game.timedEventActiveQuarter);
+    final remaining = _eventRemainingSeconds(game, referenceTime);
+    final remainingLabel =
+        remaining != null ? _formatSeconds(remaining) : null;
+    if (phaseLabel != null && remainingLabel != null) {
+      return '$phaseLabelのイベント\n残り時間 $remainingLabel';
+    }
+    if (phaseLabel != null) {
+      return '$phaseLabelのイベントが進行中です';
+    }
+    if (remainingLabel != null) {
+      return 'イベントミッション\n残り時間 $remainingLabel';
+    }
+    return 'イベントミッションが進行中です';
+  }
+
+  String? _eventPhaseLabel(int? quarter) {
+    switch (quarter) {
+      case 1:
+        return '第1フェーズ';
+      case 2:
+        return '第2フェーズ';
+      case 3:
+        return '最終フェーズ';
+      default:
+        return null;
+    }
+  }
+
+  bool _isTimedEventActive(Game game, DateTime referenceTime) {
+    if (!game.timedEventActive) {
+      return false;
+    }
+    final startedAt = game.timedEventActiveStartedAt;
+    final durationSec = game.timedEventActiveDurationSec;
+    if (startedAt == null || durationSec == null) {
+      return true;
+    }
+    final endsAt = startedAt.add(Duration(seconds: durationSec));
+    return referenceTime.isBefore(endsAt);
+  }
+
+  int? _eventRemainingSeconds(Game game, DateTime referenceTime) {
+    final startedAt = game.timedEventActiveStartedAt;
+    final durationSec = game.timedEventActiveDurationSec;
+    if (startedAt == null || durationSec == null) {
+      return null;
+    }
+    final endsAt = startedAt.add(Duration(seconds: durationSec));
+    final remaining = endsAt.difference(referenceTime).inSeconds;
+    if (remaining <= 0) {
+      return 0;
+    }
+    return remaining;
+  }
+
   String _formatSeconds(int seconds) {
     final minutes = seconds ~/ 60;
     final secs = seconds % 60;
@@ -122,17 +195,29 @@ class _BannerCard extends StatelessWidget {
     required this.title,
     required this.subtitle,
     this.actions,
+    this.highlight = false,
   });
 
   final String title;
   final String subtitle;
   final List<Widget>? actions;
+  final bool highlight;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final backgroundColor = highlight
+        ? Colors.orange.shade600.withOpacity(0.95)
+        : theme.colorScheme.surface.withOpacity(0.9);
+    final titleStyle = theme.textTheme.titleMedium?.copyWith(
+      fontWeight: FontWeight.bold,
+      color: highlight ? Colors.white : null,
+    );
+    final subtitleStyle = theme.textTheme.bodySmall?.copyWith(
+      color: highlight ? Colors.white.withOpacity(0.9) : null,
+    );
     return Card(
-      color: theme.colorScheme.surface.withOpacity(0.9),
+      color: backgroundColor,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Column(
@@ -141,13 +226,12 @@ class _BannerCard extends StatelessWidget {
           children: [
             Text(
               title,
-              style: theme.textTheme.titleMedium
-                  ?.copyWith(fontWeight: FontWeight.bold),
+              style: titleStyle,
             ),
             const SizedBox(height: 4),
             Text(
               subtitle,
-              style: theme.textTheme.bodySmall,
+              style: subtitleStyle,
             ),
             if (actions != null && actions!.isNotEmpty) ...[
               const SizedBox(height: 8),

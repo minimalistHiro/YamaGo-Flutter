@@ -47,6 +47,10 @@ class GameEventRepository {
       }
       transaction.update(gameRef, {
         'timedEventQuarters': FieldValue.arrayUnion([quarterIndex]),
+        'timedEventActive': true,
+        'timedEventActiveStartedAt': FieldValue.serverTimestamp(),
+        'timedEventActiveDurationSec': eventDurationSeconds,
+        'timedEventActiveQuarter': quarterIndex,
         'updatedAt': FieldValue.serverTimestamp(),
       });
       final eventRef = gameRef.collection('events').doc();
