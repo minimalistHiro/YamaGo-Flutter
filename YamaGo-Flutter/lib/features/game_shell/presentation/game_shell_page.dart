@@ -26,7 +26,6 @@ import 'package:yamago_flutter/features/chat/domain/chat_message.dart';
 import 'package:yamago_flutter/features/game/application/player_location_updater.dart';
 import 'package:yamago_flutter/features/game/application/player_providers.dart';
 import 'package:yamago_flutter/features/game/data/capture_repository.dart';
-import 'package:yamago_flutter/features/game/data/game_event_repository.dart';
 import 'package:yamago_flutter/features/game/data/rescue_repository.dart';
 import 'package:yamago_flutter/features/game/data/game_repository.dart';
 import 'package:yamago_flutter/features/game/data/player_repository.dart';
@@ -243,7 +242,6 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   LatLng? _latestUserLocation;
   Timer? _statusTicker;
   bool _isStatusTickerActive = false;
-  bool _countdownAutoStartTriggered = false;
   bool _isLocatingUser = false;
   bool _isCapturing = false;
   bool _isRescuing = false;
@@ -285,7 +283,6 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   bool _showGameSummaryPopup = false;
   bool _hasShownGameEndPopup = false;
   DateTime? _gameEndedAt;
-  bool _hasTriggeredAutoGameEnd = false;
   ProviderSubscription<AsyncValue<List<PinPoint>>>? _pinsSubscription;
   ProviderSubscription<AsyncValue<List<GameEvent>>>? _gameEventsSubscription;
   ProviderSubscription<AsyncValue<Position>>? _locationSubscription;
@@ -301,14 +298,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   bool _canReportActiveInBackground = false;
   bool _showTimedEventPopup = false;
   _TimedEventPopupData? _activeTimedEvent;
-  final Set<int> _triggeredTimedEventQuarters = <int>{};
-  DateTime? _currentGameStartAt;
-  int? _pendingTimedEventQuarter;
+  int? _lastShownTimedEventQuarter;
+  DateTime? _lastTimedEventGameStartAt;
   final math.Random _timedEventRandom = math.Random();
   static const int _defaultGameDurationSeconds = 7200;
   static const int _timedEventDefaultRequiredRunners = 1;
-  bool _hasRequestedTimedEventTimeoutResolution = false;
-  Game? _latestGame;
   bool _showTimedEventResultPopup = false;
   _TimedEventResultData? _timedEventResultData;
   DateTime? _lastTimedEventResultAt;
@@ -458,8 +452,6 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
 
     final previousGameStatus = _latestGameStatus;
     final game = gameState.valueOrNull;
-    _latestGame = game;
-    _maybeClearExpiredTimedEvent(game);
     _handleTimedEventResultChange(game);
     _updatePinClearDuration(game);
     var currentPlayer = currentPlayerState?.valueOrNull;
@@ -577,13 +569,6 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       remainingSeconds: countdownRemainingSeconds,
       role: currentPlayer?.role,
     );
-    _maybeTriggerAutoStart(
-      game: game,
-      context: context,
-      isCountdownActive: isCountdownActive,
-      remainingSeconds: countdownRemainingSeconds,
-    );
-
     final showStartButton = gameState.maybeWhen(
       data: (game) =>
           game != null &&
@@ -705,14 +690,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       allPinsCleared: allPinsCleared,
       allRunnersDown: allRunnersDown,
     );
-    _maybeTriggerAutoGameEnd(
-      game: game,
-      allPinsCleared: allPinsCleared,
-      allRunnersDown: allRunnersDown,
-      runningRemainingSeconds: runningRemainingSeconds,
-      pinCount: game?.pinCount ?? totalGenerators,
-    );
-    _maybeHandleTimedEvents(
+    _syncTimedEventPopup(
       game: game,
       players: players,
     );
@@ -1008,9 +986,6 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     required GameStatus? currentStatus,
   }) {
     if (currentStatus == null) return;
-    if (currentStatus != GameStatus.running && _hasTriggeredAutoGameEnd) {
-      _hasTriggeredAutoGameEnd = false;
-    }
     if (!_hasInitializedGameStatus) {
       _hasInitializedGameStatus = true;
       if (currentStatus == GameStatus.ended) {
@@ -1095,17 +1070,24 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     });
   }
 
-  void _maybeHandleTimedEvents({
+  void _syncTimedEventPopup({
     required Game? game,
     required List<Player>? players,
   }) {
-    final status = game?.status;
     final startAt = game?.startAt;
-    if (status != GameStatus.running || startAt == null) {
+    if (startAt == null) {
+      _lastTimedEventGameStartAt = null;
+      _lastShownTimedEventQuarter = null;
+    } else if (_lastTimedEventGameStartAt == null ||
+        !_lastTimedEventGameStartAt!.isAtSameMomentAs(startAt)) {
+      _lastTimedEventGameStartAt = startAt;
+      _lastShownTimedEventQuarter = null;
+    }
+
+    final isActive = game?.timedEventActive ?? false;
+    final quarterIndex = game?.timedEventActiveQuarter;
+    if (!isActive || quarterIndex == null) {
       final shouldHidePopup = _showTimedEventPopup || _activeTimedEvent != null;
-      _triggeredTimedEventQuarters.clear();
-      _currentGameStartAt = null;
-      _pendingTimedEventQuarter = null;
       if (shouldHidePopup) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
@@ -1114,51 +1096,29 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       }
       return;
     }
-    if (_currentGameStartAt != startAt) {
-      _currentGameStartAt = startAt;
-      _triggeredTimedEventQuarters.clear();
-      _pendingTimedEventQuarter = null;
-    }
-    final totalDurationSeconds =
-        game?.gameDurationSec ?? _defaultGameDurationSeconds;
-    if (totalDurationSeconds <= 0) {
+    if (_lastShownTimedEventQuarter == quarterIndex) {
       return;
     }
-    final elapsed = game?.runningElapsedSeconds;
-    if (elapsed == null || elapsed <= 0) {
-      return;
-    }
-    final double quarterDuration = totalDurationSeconds / 4;
-    for (var quarter = 1; quarter <= 3; quarter++) {
-      final thresholdSeconds = (quarterDuration * quarter).ceil();
-      final hasTriggered = _triggeredTimedEventQuarters.contains(quarter);
-      if (elapsed >= thresholdSeconds &&
-          !hasTriggered &&
-          _pendingTimedEventQuarter != quarter) {
-        _triggeredTimedEventQuarters.add(quarter);
-        _pendingTimedEventQuarter = quarter;
-        final popupData = _buildTimedEventPopupData(
-          quarterIndex: quarter,
-          totalDurationSeconds: totalDurationSeconds,
-          players: players,
-        );
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          setState(() {
-            _activeTimedEvent = popupData;
-            _showTimedEventPopup = true;
-            _pendingTimedEventQuarter = null;
-          });
-        });
-        _recordTimedEventTrigger(popupData);
-        _maybeNotifyMapPopup(
-          notificationId: 'timed-event-${widget.gameId}-$quarter',
-          title: 'イベント発生',
-          body: '新しいイベントミッションが届きました。マップで詳細を確認してください。',
-        );
-        break;
-      }
-    }
+    final popupData = _buildTimedEventPopupData(
+      quarterIndex: quarterIndex,
+      totalDurationSeconds: game?.gameDurationSec ?? _defaultGameDurationSeconds,
+      players: players,
+      requiredRunnersOverride: game?.timedEventRequiredRunners,
+      eventDurationSecondsOverride: game?.timedEventActiveDurationSec,
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() {
+        _activeTimedEvent = popupData;
+        _showTimedEventPopup = true;
+        _lastShownTimedEventQuarter = quarterIndex;
+      });
+    });
+    _maybeNotifyMapPopup(
+      notificationId: 'timed-event-${widget.gameId}-$quarterIndex',
+      title: 'イベント発生',
+      body: '新しいイベントミッションが届きました。マップで詳細を確認してください。',
+    );
   }
 
   void _handleTimedEventPopupDismissed() {
@@ -1175,89 +1135,6 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     setState(() {
       _showTimedEventResultPopup = false;
     });
-  }
-
-  void _recordTimedEventTrigger(_TimedEventPopupData data) {
-    final repo = ref.read(gameEventRepositoryProvider);
-    final targetPinId = _pickTimedEventTargetPinId();
-    unawaited(
-      repo
-          .recordTimedEventTrigger(
-        gameId: widget.gameId,
-        quarterIndex: data.quarterIndex,
-        requiredRunners: data.requiredRunners,
-        eventDurationSeconds: data.eventDurationSeconds,
-        percentProgress: data.percentProgress,
-        eventTimeLabel: data.eventTimeLabel,
-        totalRunnerCount: data.totalRunnerCount,
-        targetPinId: targetPinId,
-      )
-          .catchError((error, stackTrace) {
-        debugPrint('Failed to record timed event trigger: $error');
-        debugPrint('$stackTrace');
-      }),
-    );
-  }
-
-  String? _pickTimedEventTargetPinId() {
-    if (_latestPins.isEmpty) {
-      return null;
-    }
-    final availablePins = _latestPins
-        .where((pin) => pin.status == PinStatus.pending && !pin.cleared)
-        .toList(growable: false);
-    if (availablePins.isEmpty) {
-      return null;
-    }
-    final index = _timedEventRandom.nextInt(availablePins.length);
-    return availablePins[index].id;
-  }
-
-  void _maybeClearExpiredTimedEvent(Game? game) {
-    if (game == null || !game.timedEventActive) {
-      if (_hasRequestedTimedEventTimeoutResolution) {
-        _hasRequestedTimedEventTimeoutResolution = false;
-      }
-      return;
-    }
-    final startedAt = game.timedEventActiveStartedAt;
-    final durationSec = game.timedEventActiveDurationSec;
-    if (startedAt == null || durationSec == null) {
-      return;
-    }
-    final serverTimeService = ref.read(serverTimeServiceProvider);
-    final now = serverTimeService.now();
-    final endsAt = startedAt.add(Duration(seconds: durationSec));
-    if (now.isBefore(endsAt)) {
-      return;
-    }
-    if (_hasRequestedTimedEventTimeoutResolution) {
-      return;
-    }
-    _hasRequestedTimedEventTimeoutResolution = true;
-    unawaited(
-      _resolveTimedEventResult(
-        success: false,
-        expectedTargetPinId: game.timedEventTargetPinId,
-      ),
-    );
-  }
-
-  Future<void> _resolveTimedEventResult({
-    required bool success,
-    String? expectedTargetPinId,
-  }) async {
-    final repo = ref.read(gameRepositoryProvider);
-    try {
-      await repo.resolveTimedEvent(
-        gameId: widget.gameId,
-        success: success,
-        expectedTargetPinId: expectedTargetPinId,
-      );
-    } catch (error, stackTrace) {
-      debugPrint('Failed to resolve timed event result: $error');
-      debugPrint('$stackTrace');
-    }
   }
 
   void _handleTimedEventResultChange(Game? game) {
@@ -1406,46 +1283,6 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     );
   }
 
-  void _maybeTriggerAutoStart({
-    required Game? game,
-    required BuildContext context,
-    required bool isCountdownActive,
-    required int? remainingSeconds,
-  }) {
-    if (game == null || game.status != GameStatus.countdown) {
-      _countdownAutoStartTriggered = false;
-      return;
-    }
-    if (isCountdownActive) {
-      _countdownAutoStartTriggered = false;
-      return;
-    }
-    if (remainingSeconds == null) {
-      _countdownAutoStartTriggered = false;
-      return;
-    }
-    if (remainingSeconds <= 0 && !_countdownAutoStartTriggered) {
-      _countdownAutoStartTriggered = true;
-      unawaited(_startGameAfterCountdown(context));
-    }
-  }
-
-  Future<void> _startGameAfterCountdown(
-    BuildContext context,
-  ) async {
-    try {
-      final controller = ref.read(gameControlControllerProvider);
-      await controller.startGame(gameId: widget.gameId);
-    } catch (error) {
-      _countdownAutoStartTriggered = false;
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('ゲーム開始に失敗しました: $error')),
-        );
-      }
-    }
-  }
-
   int? _calculateCountdownRemainingSeconds(Game? game) {
     if (game == null) return null;
     final endAt = game.countdownEndAt;
@@ -1459,68 +1296,6 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       return 0;
     }
     return remaining;
-  }
-
-  void _maybeTriggerAutoGameEnd({
-    required Game? game,
-    required bool allPinsCleared,
-    required bool allRunnersDown,
-    required int? runningRemainingSeconds,
-    required int? pinCount,
-  }) {
-    if (game?.status != GameStatus.running) {
-      return;
-    }
-    final result = _autoGameEndResult(
-      allPinsCleared: allPinsCleared,
-      allRunnersDown: allRunnersDown,
-      runningRemainingSeconds: runningRemainingSeconds,
-    );
-    if (result == null) {
-      return;
-    }
-    if (_hasTriggeredAutoGameEnd) {
-      return;
-    }
-    _hasTriggeredAutoGameEnd = true;
-    unawaited(_endGameAutomatically(pinCount: pinCount, result: result));
-  }
-
-  GameEndResult? _autoGameEndResult({
-    required bool allPinsCleared,
-    required bool allRunnersDown,
-    required int? runningRemainingSeconds,
-  }) {
-    if (allPinsCleared) {
-      return GameEndResult.runnerVictory;
-    }
-    if (allRunnersDown) {
-      return GameEndResult.oniVictory;
-    }
-    final isTimeExpired =
-        runningRemainingSeconds != null && runningRemainingSeconds <= 0;
-    if (isTimeExpired) {
-      return GameEndResult.draw;
-    }
-    return null;
-  }
-
-  Future<void> _endGameAutomatically({
-    required int? pinCount,
-    required GameEndResult result,
-  }) async {
-    try {
-      final controller = ref.read(gameControlControllerProvider);
-      await controller.endGame(
-        gameId: widget.gameId,
-        pinCount: pinCount,
-        result: result,
-      );
-    } catch (error, stackTrace) {
-      debugPrint('Failed to end game automatically: $error');
-      debugPrint('$stackTrace');
-      _hasTriggeredAutoGameEnd = false;
-    }
   }
 
   Future<void> _handleMyLocationButtonPressed() async {
@@ -1956,28 +1731,10 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       ..addAll(clearedPins);
     if (newPinId != null) {
       _showGeneratorClearedAlertForPin(newPinId);
-      _maybeHandleTimedEventPinCleared(newPinId);
     }
     if (clearedPins.isEmpty && _showGeneratorClearedAlert) {
       _dismissGeneratorClearedAlert();
     }
-  }
-
-  void _maybeHandleTimedEventPinCleared(String pinId) {
-    final game = _latestGame;
-    if (game == null || !game.timedEventActive) {
-      return;
-    }
-    final targetPinId = game.timedEventTargetPinId;
-    if (targetPinId == null || targetPinId != pinId) {
-      return;
-    }
-    unawaited(
-      _resolveTimedEventResult(
-        success: true,
-        expectedTargetPinId: targetPinId,
-      ),
-    );
   }
 
   void _handleGameEvents(List<GameEvent> events) {
@@ -2958,12 +2715,17 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     required int quarterIndex,
     required int totalDurationSeconds,
     required List<Player>? players,
+    int? requiredRunnersOverride,
+    int? eventDurationSecondsOverride,
   }) {
     final totalRunnerCount = _countTotalRunners(players);
-    final requiredRunners =
+    final requiredRunners = requiredRunnersOverride ??
         _resolveTimedEventRequiredRunners(totalRunnerCount);
-    final eventDurationSeconds =
-        math.max(1, (totalDurationSeconds / 8).round());
+    final computedDuration = math.max(1, (totalDurationSeconds / 8).round());
+    final eventDurationSeconds = math.max(
+      1,
+      eventDurationSecondsOverride ?? computedDuration,
+    );
     final eventDurationLabel =
         _formatEventDurationLabel(eventDurationSeconds);
     final percentProgress = quarterIndex * 25;

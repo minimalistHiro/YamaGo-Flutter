@@ -57,6 +57,19 @@ const SUBCOLLECTION_ACTIVITY_FIELDS = [
   },
 ];
 
+const DEFAULT_GAME_DURATION_SECONDS = 7200;
+const DEFAULT_PIN_COUNT = 10;
+const DEFAULT_TIMED_EVENT_REQUIRED_RUNNERS = 1;
+const YAMANOTE_CENTER = { lat: 35.735, lng: 139.725 };
+const YAMANOTE_BOUNDS = {
+  south: 35.6,
+  west: 139.63,
+  north: 35.88,
+  east: 139.82,
+};
+const PIN_DUPLICATE_PRECISION = 6;
+const MAX_PIN_COUNT = 20;
+
 async function handleChatNotification({
   snapshot,
   gameId,
@@ -706,6 +719,45 @@ exports.cleanupInactiveGames = functions
     return null;
   });
 
+exports.processGameAutomations = functions
+  .region('us-central1')
+  .runWith({
+    timeoutSeconds: 540,
+    memory: '512MB',
+  })
+  .pubsub.schedule('*/1 * * * *')
+  .timeZone('Asia/Tokyo')
+  .onRun(async () => {
+    const snapshot = await db
+      .collection('games')
+      .where('status', 'in', ['countdown', 'running'])
+      .get();
+
+    if (snapshot.empty) {
+      functions.logger.info('No games to automate');
+      return null;
+    }
+
+    for (const doc of snapshot.docs) {
+      const data = doc.data() || {};
+      try {
+        if (data.status === 'countdown') {
+          await processCountdownGame(doc.id, data);
+        } else if (data.status === 'running') {
+          await processRunningGame(doc.id, data);
+        }
+      } catch (error) {
+        functions.logger.error('Failed to process game automation', {
+          gameId: doc.id,
+          status: data.status,
+          error,
+        });
+      }
+    }
+
+    return null;
+  });
+
 async function getLastActivityForGame(doc) {
   const data = doc.data() || {};
   const timestamps = [];
@@ -894,4 +946,596 @@ function getQuarterLabel(quarter) {
     default:
       return 'イベント';
   }
+}
+
+async function processCountdownGame(gameId, data) {
+  const countdownEnd = resolveCountdownEndDate(data);
+  if (!countdownEnd) {
+    return;
+  }
+  if (Date.now() < countdownEnd.getTime()) {
+    return;
+  }
+  await startGameFromServer(gameId);
+}
+
+function resolveCountdownEndDate(data) {
+  const countdownEndAt = convertToDate(data?.countdownEndAt);
+  if (countdownEndAt) {
+    return countdownEndAt;
+  }
+  const countdownStartAt = convertToDate(data?.countdownStartAt);
+  const durationSeconds = toInt(data?.countdownDurationSec);
+  if (!countdownStartAt || durationSeconds <= 0) {
+    return null;
+  }
+  return new Date(countdownStartAt.getTime() + durationSeconds * 1000);
+}
+
+async function startGameFromServer(gameId) {
+  const gameRef = db.collection('games').doc(gameId);
+  const started = await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(gameRef);
+    if (!snapshot.exists) {
+      return false;
+    }
+    const data = snapshot.data() || {};
+    if (data.status !== 'countdown') {
+      return false;
+    }
+    transaction.update(gameRef, {
+      status: 'running',
+      startAt: admin.firestore.FieldValue.serverTimestamp(),
+      timedEventActive: false,
+      timedEventActiveStartedAt: null,
+      timedEventActiveDurationSec: null,
+      timedEventActiveQuarter: null,
+      timedEventTargetPinId: null,
+      timedEventRequiredRunners: null,
+      timedEventResult: null,
+      timedEventResultAt: null,
+      oniCaptureRadiusMultiplier: 1.0,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return true;
+  });
+  if (started) {
+    functions.logger.info('Automatically started game after countdown', {
+      gameId,
+    });
+  }
+  return started;
+}
+
+async function processRunningGame(gameId, data) {
+  const startAt = convertToDate(data?.startAt);
+  if (!startAt) {
+    return;
+  }
+  const totalDurationSeconds = Math.max(
+    1,
+    toInt(data?.gameDurationSec) || DEFAULT_GAME_DURATION_SECONDS,
+  );
+  const [playersSnapshot, pinsSnapshot] = await Promise.all([
+    db.collection('games').doc(gameId).collection('players').get(),
+    db.collection('games').doc(gameId).collection('pins').get(),
+  ]);
+
+  const players = playersSnapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...doc.data(),
+  }));
+  const pins = pinsSnapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...doc.data(),
+  }));
+
+  const pinCount = toInt(data?.pinCount) || DEFAULT_PIN_COUNT;
+
+  const endedByPins = await maybeEndGameForPins(gameId, pinCount, pins);
+  if (endedByPins) {
+    return;
+  }
+  const endedByRunners = await maybeEndGameForRunners(gameId, pinCount, players);
+  if (endedByRunners) {
+    return;
+  }
+  const endedByTimeout = await maybeEndGameByTimeout(
+    gameId,
+    pinCount,
+    startAt,
+    totalDurationSeconds,
+  );
+  if (endedByTimeout) {
+    return;
+  }
+
+  await maybeResolveTimedEventByPinClear(gameId, data, pins);
+  await maybeResolveTimedEventTimeout(gameId, data);
+  await maybeTriggerTimedEvent({
+    gameId,
+    gameData: data,
+    players,
+    pins,
+    startAt,
+    totalDurationSeconds,
+  });
+}
+
+async function maybeEndGameByTimeout(gameId, pinCount, startAt, durationSec) {
+  if (!startAt || durationSec <= 0) {
+    return false;
+  }
+  const endTimeMs = startAt.getTime() + durationSec * 1000;
+  if (Date.now() < endTimeMs) {
+    return false;
+  }
+  await endGameFromServer(gameId, 'draw', pinCount);
+  return true;
+}
+
+async function maybeEndGameForPins(gameId, pinCount, pins) {
+  if (!Array.isArray(pins) || pins.length === 0) {
+    return false;
+  }
+  const hasPendingPin = pins.some((pin) => !isPinCleared(pin));
+  if (hasPendingPin) {
+    return false;
+  }
+  await endGameFromServer(gameId, 'runner_victory', pinCount);
+  return true;
+}
+
+function isPinCleared(pin) {
+  if (!pin) {
+    return false;
+  }
+  if (pin.cleared === true) {
+    return true;
+  }
+  const status = (pin.status || '').toString();
+  return status === 'cleared';
+}
+
+async function maybeEndGameForRunners(gameId, pinCount, players) {
+  if (!Array.isArray(players) || players.length === 0) {
+    return false;
+  }
+  const activeRunners = players.filter(
+    (player) => player.role === 'runner' && player.active !== false,
+  );
+  if (activeRunners.length === 0) {
+    return false;
+  }
+  const hasStandingRunner = activeRunners.some(
+    (runner) => (runner.status || 'active') === 'active',
+  );
+  if (hasStandingRunner) {
+    return false;
+  }
+  await endGameFromServer(gameId, 'oni_victory', pinCount);
+  return true;
+}
+
+async function maybeTriggerTimedEvent({
+  gameId,
+  gameData,
+  players,
+  pins,
+  startAt,
+  totalDurationSeconds,
+}) {
+  if (gameData?.timedEventActive) {
+    return;
+  }
+  const elapsedSeconds = Math.floor(
+    (Date.now() - startAt.getTime()) / 1000,
+  );
+  if (elapsedSeconds <= 0) {
+    return;
+  }
+  const triggered = new Set(
+    Array.isArray(gameData?.timedEventQuarters)
+      ? gameData.timedEventQuarters.map((value) => toInt(value))
+      : [],
+  );
+  const quarterDuration = totalDurationSeconds / 4;
+  for (let quarter = 1; quarter <= 3; quarter += 1) {
+    if (triggered.has(quarter)) {
+      continue;
+    }
+    const thresholdSeconds = Math.ceil(quarterDuration * quarter);
+    if (elapsedSeconds >= thresholdSeconds) {
+      const metadata = buildTimedEventMetadata({
+        quarterIndex: quarter,
+        totalDurationSeconds,
+        players,
+        pins,
+      });
+      const triggered = await recordTimedEventTriggerFromServer({
+        gameId,
+        ...metadata,
+      });
+      if (triggered) {
+        gameData.timedEventActive = true;
+        gameData.timedEventTargetPinId = metadata.targetPinId ?? null;
+        break;
+      }
+    }
+  }
+}
+
+function buildTimedEventMetadata({
+  quarterIndex,
+  totalDurationSeconds,
+  players,
+  pins,
+}) {
+  const totalRunnerCount = Array.isArray(players)
+    ? players.filter((player) => player.role === 'runner').length
+    : 0;
+  const requiredRunners = totalRunnerCount > 0
+    ? Math.max(1, Math.floor(Math.random() * totalRunnerCount) + 1)
+    : DEFAULT_TIMED_EVENT_REQUIRED_RUNNERS;
+  const eventDurationSeconds = Math.max(
+    1,
+    Math.round(totalDurationSeconds / 8),
+  );
+  const percentProgress = Math.min(100, quarterIndex * 25);
+  const computedSeconds = Math.round((totalDurationSeconds / 4) * quarterIndex);
+  const clampedSeconds = Math.max(
+    0,
+    Math.min(computedSeconds, totalDurationSeconds),
+  );
+  const eventTimeLabel = formatTimedEventTimeMark(clampedSeconds);
+  const targetPinId = pickTimedEventTargetPinId(pins);
+  return {
+    quarterIndex,
+    requiredRunners,
+    eventDurationSeconds,
+    percentProgress,
+    eventTimeLabel,
+    totalRunnerCount,
+    targetPinId,
+  };
+}
+
+function formatTimedEventTimeMark(seconds) {
+  if (seconds <= 0) {
+    return '直後';
+  }
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours > 0) {
+    if (minutes === 0) {
+      return `${hours}時間`;
+    }
+    return `${hours}時間${minutes}分`;
+  }
+  if (minutes > 0) {
+    return `${minutes}分`;
+  }
+  return `${seconds % 60}秒`;
+}
+
+function pickTimedEventTargetPinId(pins) {
+  if (!Array.isArray(pins) || pins.length === 0) {
+    return null;
+  }
+  const available = pins.filter((pin) => {
+    if (!pin) {
+      return false;
+    }
+    const status = (pin.status || '').toString();
+    const isPending = status === 'pending';
+    return isPending && pin.cleared !== true;
+  });
+  if (available.length === 0) {
+    return null;
+  }
+  const index = Math.floor(Math.random() * available.length);
+  return available[index]?.id ?? null;
+}
+
+async function recordTimedEventTriggerFromServer({
+  gameId,
+  quarterIndex,
+  requiredRunners,
+  eventDurationSeconds,
+  percentProgress,
+  eventTimeLabel,
+  totalRunnerCount,
+  targetPinId,
+}) {
+  const gameRef = db.collection('games').doc(gameId);
+  const triggered = await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(gameRef);
+    if (!snapshot.exists) {
+      return false;
+    }
+    const data = snapshot.data() || {};
+    if (data.status !== 'running') {
+      return false;
+    }
+    const triggered = new Set(
+      Array.isArray(data.timedEventQuarters)
+        ? data.timedEventQuarters.map((value) => toInt(value))
+        : [],
+    );
+    if (triggered.has(quarterIndex)) {
+      return false;
+    }
+    transaction.update(gameRef, {
+      timedEventQuarters: admin.firestore.FieldValue.arrayUnion(quarterIndex),
+      timedEventActive: true,
+      timedEventActiveStartedAt: admin.firestore.FieldValue.serverTimestamp(),
+      timedEventActiveDurationSec: eventDurationSeconds,
+      timedEventActiveQuarter: quarterIndex,
+      timedEventTargetPinId: targetPinId ?? null,
+      timedEventRequiredRunners: requiredRunners,
+      timedEventResult: null,
+      timedEventResultAt: null,
+      oniCaptureRadiusMultiplier: 1.0,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    const eventRef = gameRef.collection('events').doc();
+    transaction.set(eventRef, {
+      type: 'timed_event',
+      quarter: quarterIndex,
+      requiredRunners,
+      eventDurationSeconds,
+      percentProgress,
+      eventTimeLabel,
+      totalRunnerCount,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return true;
+  });
+  if (triggered) {
+    functions.logger.info('Triggered timed event', {
+      gameId,
+      quarterIndex,
+      requiredRunners,
+      eventDurationSeconds,
+      targetPinId: targetPinId ?? null,
+    });
+  }
+  return Boolean(triggered);
+}
+
+async function maybeResolveTimedEventTimeout(gameId, data) {
+  if (!data?.timedEventActive) {
+    return;
+  }
+  const startedAt = convertToDate(data.timedEventActiveStartedAt);
+  const durationSec = toInt(data.timedEventActiveDurationSec);
+  if (!startedAt || durationSec <= 0) {
+    return;
+  }
+  const endsAt = startedAt.getTime() + durationSec * 1000;
+  if (Date.now() < endsAt) {
+    return;
+  }
+  const resolved = await resolveTimedEventFromServer(
+    gameId,
+    false,
+    data.timedEventTargetPinId || null,
+  );
+  if (resolved) {
+    data.timedEventActive = false;
+    data.timedEventTargetPinId = null;
+  }
+}
+
+async function maybeResolveTimedEventByPinClear(gameId, data, pins) {
+  if (!data?.timedEventActive) {
+    return;
+  }
+  const targetPinId = data.timedEventTargetPinId;
+  if (!targetPinId) {
+    return;
+  }
+  const targetPin = Array.isArray(pins)
+    ? pins.find((pin) => pin.id === targetPinId)
+    : null;
+  if (!targetPin) {
+    return;
+  }
+  if (!isPinCleared(targetPin)) {
+    return;
+  }
+  const resolved = await resolveTimedEventFromServer(gameId, true, targetPinId);
+  if (resolved) {
+    data.timedEventActive = false;
+    data.timedEventTargetPinId = null;
+  }
+}
+
+async function resolveTimedEventFromServer(gameId, success, expectedTargetPinId) {
+  const gameRef = db.collection('games').doc(gameId);
+  const resolved = await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(gameRef);
+    if (!snapshot.exists) {
+      return false;
+    }
+    const data = snapshot.data() || {};
+    if (!data.timedEventActive) {
+      return false;
+    }
+    if (
+      expectedTargetPinId &&
+      data.timedEventTargetPinId &&
+      data.timedEventTargetPinId !== expectedTargetPinId
+    ) {
+      return false;
+    }
+    transaction.update(gameRef, {
+      timedEventActive: false,
+      timedEventActiveStartedAt: null,
+      timedEventActiveDurationSec: null,
+      timedEventActiveQuarter: null,
+      timedEventTargetPinId: null,
+      timedEventRequiredRunners: null,
+      timedEventResult: success ? 'success' : 'failure',
+      timedEventResultAt: admin.firestore.FieldValue.serverTimestamp(),
+      oniCaptureRadiusMultiplier: success ? 1.0 : 2.0,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    const eventRef = gameRef.collection('events').doc();
+    transaction.set(eventRef, {
+      type: 'timed_event_result',
+      result: success ? 'success' : 'failure',
+      quarter: data.timedEventActiveQuarter ?? null,
+      requiredRunners: data.timedEventRequiredRunners ?? null,
+      eventDurationSeconds: data.timedEventActiveDurationSec ?? null,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      resultAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return {
+      quarter: data.timedEventActiveQuarter ?? null,
+      success,
+    };
+  });
+  if (resolved) {
+    functions.logger.info('Resolved timed event automatically', {
+      gameId,
+      quarter: resolved.quarter,
+      success: resolved.success,
+    });
+    return true;
+  }
+  return false;
+}
+
+async function endGameFromServer(gameId, result, pinCount) {
+  const gameRef = db.collection('games').doc(gameId);
+  const resolved = await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(gameRef);
+    if (!snapshot.exists) {
+      return null;
+    }
+    const data = snapshot.data() || {};
+    if (data.status !== 'running') {
+      return null;
+    }
+    const resolvedPinCount = toInt(pinCount) || toInt(data.pinCount) || DEFAULT_PIN_COUNT;
+    transaction.update(gameRef, {
+      status: 'ended',
+      endResult: result,
+      timedEventActive: false,
+      timedEventActiveStartedAt: null,
+      timedEventActiveDurationSec: null,
+      timedEventActiveQuarter: null,
+      timedEventTargetPinId: null,
+      timedEventRequiredRunners: null,
+      timedEventResult: null,
+      timedEventResultAt: null,
+      oniCaptureRadiusMultiplier: 1.0,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return {
+      pinCount: resolvedPinCount,
+    };
+  });
+  if (!resolved) {
+    return;
+  }
+  await reviveDownedRunners(gameId);
+  if (resolved.pinCount > 0) {
+    await reseedPinsWithRandomLocations(gameId, resolved.pinCount);
+  }
+  functions.logger.info('Automatically ended game', {
+    gameId,
+    result,
+  });
+}
+
+async function reviveDownedRunners(gameId) {
+  const playersRef = db.collection('games').doc(gameId).collection('players');
+  const snapshot = await playersRef
+    .where('role', '==', 'runner')
+    .where('status', '==', 'downed')
+    .get();
+  if (snapshot.empty) {
+    return;
+  }
+  const batch = db.batch();
+  snapshot.docs.forEach((doc) => {
+    batch.update(doc.ref, { status: 'active' });
+  });
+  await batch.commit();
+}
+
+async function reseedPinsWithRandomLocations(gameId, targetCount) {
+  const sanitizedCount = Math.max(
+    0,
+    Math.min(toInt(targetCount), MAX_PIN_COUNT),
+  );
+  const pinsRef = db.collection('games').doc(gameId).collection('pins');
+  const snapshot = await pinsRef.get();
+  const batch = db.batch();
+  let hasChanges = false;
+  snapshot.docs.forEach((doc) => {
+    batch.delete(doc.ref);
+    hasChanges = true;
+  });
+  if (sanitizedCount > 0) {
+    const locations = generatePinLocations(sanitizedCount);
+    for (const location of locations) {
+      const docRef = pinsRef.doc();
+      batch.set(docRef, {
+        lat: location.lat,
+        lng: location.lng,
+        type: 'yellow',
+        status: 'pending',
+        cleared: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      hasChanges = true;
+    }
+  }
+  if (hasChanges) {
+    await batch.commit();
+  }
+}
+
+function generatePinLocations(count) {
+  const locations = [];
+  const usedKeys = new Set();
+  const maxAttempts = Math.max(count * 200, 200);
+  let attempts = 0;
+  while (locations.length < count && attempts < maxAttempts) {
+    const lat = getRandomInRange(YAMANOTE_BOUNDS.south, YAMANOTE_BOUNDS.north);
+    const lng = getRandomInRange(YAMANOTE_BOUNDS.west, YAMANOTE_BOUNDS.east);
+    const key = formatPinLocationKey(lat, lng);
+    if (!usedKeys.has(key)) {
+      usedKeys.add(key);
+      locations.push({ lat, lng });
+    } else {
+      attempts += 1;
+    }
+  }
+  let fallbackOffset = 0;
+  while (locations.length < count && fallbackOffset < count * 2) {
+    const lat = YAMANOTE_CENTER.lat;
+    const lng = YAMANOTE_CENTER.lng + fallbackOffset * 0.0001;
+    fallbackOffset += 1;
+    const key = formatPinLocationKey(lat, lng);
+    if (!usedKeys.has(key)) {
+      usedKeys.add(key);
+      locations.push({ lat, lng });
+    }
+  }
+  return locations;
+}
+
+function formatPinLocationKey(lat, lng) {
+  return `${lat.toFixed(PIN_DUPLICATE_PRECISION)}:${lng.toFixed(
+    PIN_DUPLICATE_PRECISION,
+  )}`;
+}
+
+function getRandomInRange(min, max) {
+  return min + Math.random() * (max - min);
 }
