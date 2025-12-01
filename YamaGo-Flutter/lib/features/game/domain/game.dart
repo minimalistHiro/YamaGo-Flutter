@@ -27,6 +27,7 @@ class Game {
     this.timedEventActiveStartedAt,
     this.timedEventActiveDurationSec,
     this.timedEventActiveQuarter,
+    this.timedEventTargetPinId,
   });
 
   final String id;
@@ -50,6 +51,7 @@ class Game {
   final DateTime? timedEventActiveStartedAt;
   final int? timedEventActiveDurationSec;
   final int? timedEventActiveQuarter;
+  final String? timedEventTargetPinId;
 
   int? get countdownRemainingSeconds {
     if (status != GameStatus.countdown ||
@@ -111,6 +113,7 @@ class Game {
           (data['timedEventActiveDurationSec'] as num?)?.toInt(),
       timedEventActiveQuarter:
           (data['timedEventActiveQuarter'] as num?)?.toInt(),
+      timedEventTargetPinId: data['timedEventTargetPinId'] as String?,
     );
   }
 

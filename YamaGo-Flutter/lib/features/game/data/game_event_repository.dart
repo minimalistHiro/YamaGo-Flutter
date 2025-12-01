@@ -29,6 +29,7 @@ class GameEventRepository {
     required int percentProgress,
     required String eventTimeLabel,
     required int totalRunnerCount,
+    String? targetPinId,
   }) {
     final gameRef = _firestore.collection('games').doc(gameId);
     return _firestore.runTransaction<bool>((transaction) async {
@@ -51,6 +52,7 @@ class GameEventRepository {
         'timedEventActiveStartedAt': FieldValue.serverTimestamp(),
         'timedEventActiveDurationSec': eventDurationSeconds,
         'timedEventActiveQuarter': quarterIndex,
+        'timedEventTargetPinId': targetPinId,
         'updatedAt': FieldValue.serverTimestamp(),
       });
       final eventRef = gameRef.collection('events').doc();

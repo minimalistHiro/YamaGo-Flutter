@@ -272,6 +272,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   BitmapDescriptor? _generatorPinMarkerDescriptor;
   BitmapDescriptor? _clearingPinMarkerDescriptor;
   BitmapDescriptor? _clearedPinMarkerDescriptor;
+  BitmapDescriptor? _eventTargetPinMarkerDescriptor;
   final Set<String> _knownClearedPinIds = <String>{};
   final Set<String> _knownClearingPinIds = <String>{};
   final Set<String> _handledGameEventIds = <String>{};
@@ -1117,6 +1118,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
 
   void _recordTimedEventTrigger(_TimedEventPopupData data) {
     final repo = ref.read(gameEventRepositoryProvider);
+    final targetPinId = _pickTimedEventTargetPinId();
     unawaited(
       repo
           .recordTimedEventTrigger(
@@ -1127,12 +1129,27 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
         percentProgress: data.percentProgress,
         eventTimeLabel: data.eventTimeLabel,
         totalRunnerCount: data.totalRunnerCount,
+        targetPinId: targetPinId,
       )
           .catchError((error, stackTrace) {
         debugPrint('Failed to record timed event trigger: $error');
         debugPrint('$stackTrace');
       }),
     );
+  }
+
+  String? _pickTimedEventTargetPinId() {
+    if (_latestPins.isEmpty) {
+      return null;
+    }
+    final availablePins = _latestPins
+        .where((pin) => pin.status == PinStatus.pending && !pin.cleared)
+        .toList(growable: false);
+    if (availablePins.isEmpty) {
+      return null;
+    }
+    final index = _timedEventRandom.nextInt(availablePins.length);
+    return availablePins[index].id;
   }
 
   void _maybeClearExpiredTimedEvent(Game? game) {
@@ -2053,6 +2070,10 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
           color: Colors.grey.shade500,
           icon: Icons.electric_bolt,
         ),
+        markerIconFactory.create(
+          color: Colors.lightBlueAccent,
+          icon: Icons.electric_bolt,
+        ),
       ]);
       if (!mounted) return;
       setState(() {
@@ -2062,6 +2083,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
         _generatorPinMarkerDescriptor = results[3];
         _clearingPinMarkerDescriptor = results[4];
         _clearedPinMarkerDescriptor = results[5];
+        _eventTargetPinMarkerDescriptor = results[6];
       });
     } catch (error) {
       debugPrint('Failed to load custom markers: $error');
@@ -2371,6 +2393,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     final markers = <Marker>{};
     final runnerRadius = game?.runnerSeeGeneratorRadiusM?.toDouble();
     final killerRadius = game?.killerSeeGeneratorRadiusM?.toDouble();
+    final timedEventTargetPinId = game?.timedEventTargetPinId;
     for (final pin in pins) {
       final position = LatLng(pin.lat, pin.lng);
       final isVisible = _shouldDisplayPin(
@@ -2379,17 +2402,25 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
         selfPosition: selfPosition,
         runnerRadius: runnerRadius,
         killerRadius: killerRadius,
+        timedEventTargetPinId: timedEventTargetPinId,
       );
       if (!isVisible) continue;
-      final iconDescriptor = _pinIconForStatus(pin.status);
+      final isEventTarget =
+          timedEventTargetPinId != null && pin.id == timedEventTargetPinId;
+      final iconDescriptor =
+          _pinIconForPin(pin.status, isEventTarget: isEventTarget);
+      final markerTitle = isEventTarget ? 'イベント対象の発電所' : '発電所';
+      final snippet = isEventTarget
+          ? '逃走者全員に常時表示されています'
+          : _pinStatusLabel(pin.status);
       markers.add(
         Marker(
           markerId: MarkerId('pin-${pin.id}'),
           position: position,
           icon: iconDescriptor,
           infoWindow: InfoWindow(
-            title: '発電所',
-            snippet: _pinStatusLabel(pin.status),
+            title: markerTitle,
+            snippet: snippet,
           ),
         ),
       );
@@ -2403,8 +2434,14 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     required LatLng? selfPosition,
     required double? runnerRadius,
     required double? killerRadius,
+    required String? timedEventTargetPinId,
   }) {
     if (_shouldAlwaysDisplayPin(pin)) {
+      return true;
+    }
+    final isEventTarget =
+        timedEventTargetPinId != null && pin.id == timedEventTargetPinId;
+    if (isEventTarget && role == PlayerRole.runner) {
       return true;
     }
     if (selfPosition == null || role == null) {
@@ -2427,6 +2464,17 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   bool _shouldAlwaysDisplayPin(PinPoint pin) {
     if (pin.cleared) return true;
     return pin.status == PinStatus.cleared || pin.status == PinStatus.clearing;
+  }
+
+  BitmapDescriptor _pinIconForPin(
+    PinStatus status, {
+    required bool isEventTarget,
+  }) {
+    if (isEventTarget) {
+      return _eventTargetPinMarkerDescriptor ??
+          BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueCyan);
+    }
+    return _pinIconForStatus(status);
   }
 
   String _pinStatusLabel(PinStatus status) {

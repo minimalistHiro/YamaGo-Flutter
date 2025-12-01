@@ -40,6 +40,7 @@ class GameRepository {
       'timedEventActiveStartedAt': null,
       'timedEventActiveDurationSec': null,
       'timedEventActiveQuarter': null,
+      'timedEventTargetPinId': null,
       ...defaultSettings.toMap(),
     });
     return docRef.id;
@@ -133,6 +134,7 @@ class GameRepository {
       'timedEventActiveStartedAt': null,
       'timedEventActiveDurationSec': null,
       'timedEventActiveQuarter': null,
+      'timedEventTargetPinId': null,
       'updatedAt': FieldValue.serverTimestamp(),
     };
     if (countdownEndAt != null) {
@@ -149,6 +151,7 @@ class GameRepository {
       'timedEventActiveStartedAt': null,
       'timedEventActiveDurationSec': null,
       'timedEventActiveQuarter': null,
+      'timedEventTargetPinId': null,
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
@@ -164,6 +167,7 @@ class GameRepository {
       'timedEventActiveStartedAt': null,
       'timedEventActiveDurationSec': null,
       'timedEventActiveQuarter': null,
+      'timedEventTargetPinId': null,
       'updatedAt': FieldValue.serverTimestamp(),
     });
     await _reviveDownedRunners(gameId: gameId);
@@ -175,6 +179,7 @@ class GameRepository {
       'timedEventActiveStartedAt': null,
       'timedEventActiveDurationSec': null,
       'timedEventActiveQuarter': null,
+      'timedEventTargetPinId': null,
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
