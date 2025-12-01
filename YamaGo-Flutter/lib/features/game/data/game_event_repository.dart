@@ -53,6 +53,9 @@ class GameEventRepository {
         'timedEventActiveDurationSec': eventDurationSeconds,
         'timedEventActiveQuarter': quarterIndex,
         'timedEventTargetPinId': targetPinId,
+        'timedEventRequiredRunners': requiredRunners,
+        'timedEventResult': null,
+        'timedEventResultAt': null,
         'updatedAt': FieldValue.serverTimestamp(),
       });
       final eventRef = gameRef.collection('events').doc();

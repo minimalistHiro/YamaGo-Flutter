@@ -277,7 +277,28 @@ exports.notifyPlayersOnGameStatusChange = functions
       currentStatus === 'running' && previousStatus !== 'running';
     const shouldNotifyEnd =
       currentStatus === 'ended' && previousStatus !== 'ended';
-    if (!shouldNotifyStart && !shouldNotifyEnd) {
+    const previousTimedEventResult = beforeData?.timedEventResult;
+    const currentTimedEventResult = afterData.timedEventResult;
+    const previousTimedEventResultAt = convertToDate(
+      beforeData?.timedEventResultAt
+    );
+    const currentTimedEventResultAt = convertToDate(
+      afterData.timedEventResultAt
+    );
+    const shouldNotifyTimedEventResult =
+      currentTimedEventResult &&
+      currentTimedEventResultAt &&
+      (!previousTimedEventResult ||
+        previousTimedEventResult !== currentTimedEventResult ||
+        !previousTimedEventResultAt ||
+        previousTimedEventResultAt.getTime() !==
+          currentTimedEventResultAt.getTime());
+
+    if (
+      !shouldNotifyStart &&
+      !shouldNotifyEnd &&
+      !shouldNotifyTimedEventResult
+    ) {
       return null;
     }
 
@@ -356,6 +377,28 @@ exports.notifyPlayersOnGameStatusChange = functions
             gameId,
           },
           apnsCategory: 'GAME_END',
+        });
+      }
+      if (shouldNotifyTimedEventResult) {
+        const isSuccess = currentTimedEventResult === 'success';
+        const body = isSuccess
+          ? '未解除の残りの発電機の場所が変わりました。'
+          : '鬼の捕獲半径が2倍になり、未解除の発電機の場所が変わりました。';
+        await sendStatusNotificationBatch({
+          gameId,
+          tokens,
+          tokenOwners,
+          invalidTokens,
+          notification: {
+            title: 'イベント終了',
+            body,
+          },
+          dataPayload: {
+            type: 'timed_event_result',
+            gameId,
+            result: currentTimedEventResult,
+          },
+          apnsCategory: 'TIMED_EVENT_RESULT',
         });
       }
 

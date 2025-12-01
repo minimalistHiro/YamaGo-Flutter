@@ -306,7 +306,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   final math.Random _timedEventRandom = math.Random();
   static const int _defaultGameDurationSeconds = 7200;
   static const int _timedEventDefaultRequiredRunners = 3;
-  bool _isClearingTimedEventState = false;
+  bool _hasRequestedTimedEventTimeoutResolution = false;
+  Game? _latestGame;
+  bool _showTimedEventResultPopup = false;
+  _TimedEventResultData? _timedEventResultData;
+  DateTime? _lastTimedEventResultAt;
 
   @override
   void initState() {
@@ -447,7 +451,9 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
 
     final previousGameStatus = _latestGameStatus;
     final game = gameState.valueOrNull;
+    _latestGame = game;
     _maybeClearExpiredTimedEvent(game);
+    _handleTimedEventResultChange(game);
     _updatePinClearDuration(game);
     final captureRadius = game?.captureRadiusM?.toDouble();
     _latestCaptureRadiusMeters = captureRadius;
@@ -615,7 +621,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
         showCaptureAlert ||
         _showGameEndPopup ||
         _showGameSummaryPopup ||
-        _showTimedEventPopup;
+        _showTimedEventPopup ||
+        _showTimedEventResultPopup;
 
     final actionButtons = <Widget>[];
     if (showStartButton) {
@@ -844,6 +851,22 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
                   child: _TimedEventPopup(
                     data: _activeTimedEvent!,
                     onClose: _handleTimedEventPopupDismissed,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        if (_showTimedEventResultPopup && _timedEventResultData != null)
+          Positioned.fill(
+            child: Container(
+              color: Colors.black54,
+              alignment: Alignment.center,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: _TimedEventResultPopup(
+                    data: _timedEventResultData!,
+                    onClose: _handleTimedEventResultPopupDismissed,
                   ),
                 ),
               ),
@@ -1116,6 +1139,15 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     setState(_clearTimedEventPopupState);
   }
 
+  void _handleTimedEventResultPopupDismissed() {
+    if (!_showTimedEventResultPopup) {
+      return;
+    }
+    setState(() {
+      _showTimedEventResultPopup = false;
+    });
+  }
+
   void _recordTimedEventTrigger(_TimedEventPopupData data) {
     final repo = ref.read(gameEventRepositoryProvider);
     final targetPinId = _pickTimedEventTargetPinId();
@@ -1154,6 +1186,9 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
 
   void _maybeClearExpiredTimedEvent(Game? game) {
     if (game == null || !game.timedEventActive) {
+      if (_hasRequestedTimedEventTimeoutResolution) {
+        _hasRequestedTimedEventTimeoutResolution = false;
+      }
       return;
     }
     final startedAt = game.timedEventActiveStartedAt;
@@ -1167,20 +1202,73 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     if (now.isBefore(endsAt)) {
       return;
     }
-    if (_isClearingTimedEventState) {
+    if (_hasRequestedTimedEventTimeoutResolution) {
       return;
     }
-    _isClearingTimedEventState = true;
-    final repo = ref.read(gameRepositoryProvider);
+    _hasRequestedTimedEventTimeoutResolution = true;
     unawaited(
-      repo
-          .clearTimedEventState(gameId: widget.gameId)
-          .catchError((error, stackTrace) {
-        debugPrint('Failed to clear timed event state: $error');
-        debugPrint('$stackTrace');
-      }).whenComplete(() {
-        _isClearingTimedEventState = false;
-      }),
+      _resolveTimedEventResult(
+        success: false,
+        expectedTargetPinId: game.timedEventTargetPinId,
+      ),
+    );
+  }
+
+  Future<void> _resolveTimedEventResult({
+    required bool success,
+    String? expectedTargetPinId,
+  }) async {
+    final repo = ref.read(gameRepositoryProvider);
+    try {
+      await repo.resolveTimedEvent(
+        gameId: widget.gameId,
+        success: success,
+        expectedTargetPinId: expectedTargetPinId,
+      );
+    } catch (error, stackTrace) {
+      debugPrint('Failed to resolve timed event result: $error');
+      debugPrint('$stackTrace');
+    }
+  }
+
+  void _handleTimedEventResultChange(Game? game) {
+    final result = game?.timedEventResult;
+    final resultAt = game?.timedEventResultAt;
+    if (result == null || resultAt == null) {
+      if (_showTimedEventResultPopup || _timedEventResultData != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {
+            _showTimedEventResultPopup = false;
+            _timedEventResultData = null;
+          });
+        });
+      }
+      return;
+    }
+    final lastAt = _lastTimedEventResultAt;
+    if (lastAt != null && !resultAt.isAfter(lastAt)) {
+      return;
+    }
+    _lastTimedEventResultAt = resultAt;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() {
+        _timedEventResultData = _TimedEventResultData(
+          result: result,
+          occurredAt: resultAt,
+        );
+        _showTimedEventResultPopup = true;
+      });
+    });
+    final message = result == TimedEventResult.success
+        ? '未解除の残りの発電機の場所が変わりました。'
+        : '鬼の捕獲半径が2倍になり、未解除の発電機の場所も変わりました。';
+    _maybeNotifyMapPopup(
+      notificationId:
+          'timed-event-result-${widget.gameId}-${resultAt.millisecondsSinceEpoch}',
+      title: 'イベント終了',
+      body: message,
     );
   }
 
@@ -1839,10 +1927,28 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       ..addAll(clearedPins);
     if (newPinId != null) {
       _showGeneratorClearedAlertForPin(newPinId);
+      _maybeHandleTimedEventPinCleared(newPinId);
     }
     if (clearedPins.isEmpty && _showGeneratorClearedAlert) {
       _dismissGeneratorClearedAlert();
     }
+  }
+
+  void _maybeHandleTimedEventPinCleared(String pinId) {
+    final game = _latestGame;
+    if (game == null || !game.timedEventActive) {
+      return;
+    }
+    final targetPinId = game.timedEventTargetPinId;
+    if (targetPinId == null || targetPinId != pinId) {
+      return;
+    }
+    unawaited(
+      _resolveTimedEventResult(
+        success: true,
+        expectedTargetPinId: targetPinId,
+      ),
+    );
   }
 
   void _handleGameEvents(List<GameEvent> events) {
@@ -3243,6 +3349,68 @@ class _TimedEventPopup extends StatefulWidget {
   State<_TimedEventPopup> createState() => _TimedEventPopupState();
 }
 
+class _TimedEventResultPopup extends StatelessWidget {
+  const _TimedEventResultPopup({
+    required this.data,
+    required this.onClose,
+  });
+
+  final _TimedEventResultData data;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isSuccess = data.result == TimedEventResult.success;
+    final title = isSuccess ? 'イベント成功' : 'イベント失敗';
+    final description = isSuccess
+        ? '未解除の残りの発電機の場所が変わりました。新しい配置を確認してください。'
+        : '鬼の捕獲半径が次のイベントまで2倍になり、未解除の発電機の場所も変わりました。警戒を強めましょう。';
+    final icon = isSuccess ? Icons.bolt : Icons.warning_amber;
+    final iconColor = isSuccess ? const Color(0xFF22B59B) : theme.colorScheme.error;
+
+    return Card(
+      color: theme.colorScheme.surface.withOpacity(0.96),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 48, color: iconColor),
+            const SizedBox(height: 12),
+            Text(
+              title,
+              style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ) ??
+                  TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: theme.colorScheme.onSurface,
+                  ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              description,
+              style: theme.textTheme.bodyMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: onClose,
+                child: const Text('OK'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _TimedEventPopupState extends State<_TimedEventPopup> {
   final PageController _pageController = PageController();
   int _currentPage = 0;
@@ -3413,6 +3581,16 @@ class _TimedEventPopupData {
   final String eventDurationLabel;
   final int totalRunnerCount;
   final List<_TimedEventSlideData> slides;
+}
+
+class _TimedEventResultData {
+  const _TimedEventResultData({
+    required this.result,
+    required this.occurredAt,
+  });
+
+  final TimedEventResult result;
+  final DateTime occurredAt;
 }
 
 class _TimedEventSlideData {

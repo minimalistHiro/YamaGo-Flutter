@@ -41,6 +41,9 @@ class GameRepository {
       'timedEventActiveDurationSec': null,
       'timedEventActiveQuarter': null,
       'timedEventTargetPinId': null,
+      'timedEventRequiredRunners': null,
+      'timedEventResult': null,
+      'timedEventResultAt': null,
       ...defaultSettings.toMap(),
     });
     return docRef.id;
@@ -135,6 +138,9 @@ class GameRepository {
       'timedEventActiveDurationSec': null,
       'timedEventActiveQuarter': null,
       'timedEventTargetPinId': null,
+      'timedEventRequiredRunners': null,
+      'timedEventResult': null,
+      'timedEventResultAt': null,
       'updatedAt': FieldValue.serverTimestamp(),
     };
     if (countdownEndAt != null) {
@@ -152,6 +158,9 @@ class GameRepository {
       'timedEventActiveDurationSec': null,
       'timedEventActiveQuarter': null,
       'timedEventTargetPinId': null,
+      'timedEventRequiredRunners': null,
+      'timedEventResult': null,
+      'timedEventResultAt': null,
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
@@ -168,6 +177,9 @@ class GameRepository {
       'timedEventActiveDurationSec': null,
       'timedEventActiveQuarter': null,
       'timedEventTargetPinId': null,
+      'timedEventRequiredRunners': null,
+      'timedEventResult': null,
+      'timedEventResultAt': null,
       'updatedAt': FieldValue.serverTimestamp(),
     });
     await _reviveDownedRunners(gameId: gameId);
@@ -180,7 +192,47 @@ class GameRepository {
       'timedEventActiveDurationSec': null,
       'timedEventActiveQuarter': null,
       'timedEventTargetPinId': null,
+      'timedEventRequiredRunners': null,
+      'timedEventResult': null,
+      'timedEventResultAt': null,
       'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  Future<bool> resolveTimedEvent({
+    required String gameId,
+    required bool success,
+    String? expectedTargetPinId,
+  }) async {
+    final gameRef = _gameCollection.doc(gameId);
+    return _firestore.runTransaction<bool>((transaction) async {
+      final snapshot = await transaction.get(gameRef);
+      if (!snapshot.exists) {
+        return false;
+      }
+      final data = snapshot.data();
+      final isActive = data?['timedEventActive'] as bool? ?? false;
+      if (!isActive) {
+        return false;
+      }
+      if (expectedTargetPinId != null) {
+        final currentTarget = data?['timedEventTargetPinId'] as String?;
+        if (currentTarget != expectedTargetPinId) {
+          return false;
+        }
+      }
+      transaction.update(gameRef, {
+        'timedEventActive': false,
+        'timedEventActiveStartedAt': null,
+        'timedEventActiveDurationSec': null,
+        'timedEventActiveQuarter': null,
+        'timedEventTargetPinId': null,
+        'timedEventRequiredRunners': null,
+        'timedEventResult': success ? 'success' : 'failure',
+        'timedEventResultAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      return true;
     });
   }
 

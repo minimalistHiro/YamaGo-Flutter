@@ -4,6 +4,8 @@ enum GameStatus { pending, countdown, running, ended }
 
 enum GameEndResult { runnerVictory, oniVictory, draw }
 
+enum TimedEventResult { success, failure }
+
 class Game {
   const Game({
     required this.id,
@@ -28,6 +30,9 @@ class Game {
     this.timedEventActiveDurationSec,
     this.timedEventActiveQuarter,
     this.timedEventTargetPinId,
+    this.timedEventRequiredRunners,
+    this.timedEventResult,
+    this.timedEventResultAt,
   });
 
   final String id;
@@ -52,6 +57,9 @@ class Game {
   final int? timedEventActiveDurationSec;
   final int? timedEventActiveQuarter;
   final String? timedEventTargetPinId;
+  final int? timedEventRequiredRunners;
+  final TimedEventResult? timedEventResult;
+  final DateTime? timedEventResultAt;
 
   int? get countdownRemainingSeconds {
     if (status != GameStatus.countdown ||
@@ -114,6 +122,10 @@ class Game {
       timedEventActiveQuarter:
           (data['timedEventActiveQuarter'] as num?)?.toInt(),
       timedEventTargetPinId: data['timedEventTargetPinId'] as String?,
+      timedEventRequiredRunners:
+          (data['timedEventRequiredRunners'] as num?)?.toInt(),
+      timedEventResult: parseTimedEventResult(data['timedEventResult'] as String?),
+      timedEventResultAt: _toDate(data['timedEventResultAt']),
     );
   }
 
@@ -186,5 +198,25 @@ String gameEndResultToRawValue(GameEndResult result) {
       return 'oni_victory';
     case GameEndResult.draw:
       return 'draw';
+  }
+}
+
+TimedEventResult? parseTimedEventResult(String? value) {
+  switch (value) {
+    case 'success':
+      return TimedEventResult.success;
+    case 'failure':
+      return TimedEventResult.failure;
+    default:
+      return null;
+  }
+}
+
+String timedEventResultToRawValue(TimedEventResult result) {
+  switch (result) {
+    case TimedEventResult.success:
+      return 'success';
+    case TimedEventResult.failure:
+      return 'failure';
   }
 }
