@@ -232,6 +232,16 @@ class GameRepository {
         'timedEventResultAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
+      final eventRef = gameRef.collection('events').doc();
+      transaction.set(eventRef, {
+        'type': 'timed_event_result',
+        'result': success ? 'success' : 'failure',
+        'quarter': data?['timedEventActiveQuarter'],
+        'requiredRunners': data?['timedEventRequiredRunners'],
+        'eventDurationSeconds': data?['timedEventActiveDurationSec'],
+        'createdAt': FieldValue.serverTimestamp(),
+        'resultAt': FieldValue.serverTimestamp(),
+      });
       return true;
     });
   }
