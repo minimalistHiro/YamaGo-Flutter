@@ -298,6 +298,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   bool _isAppInForeground = true;
   bool? _lastReportedPlayerActiveStatus;
   String? _lastReportedPlayerActiveUid;
+  bool _canReportActiveInBackground = false;
   bool _showTimedEventPopup = false;
   _TimedEventPopupData? _activeTimedEvent;
   final Set<int> _triggeredTimedEventQuarters = <int>{};
@@ -305,7 +306,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   int? _pendingTimedEventQuarter;
   final math.Random _timedEventRandom = math.Random();
   static const int _defaultGameDurationSeconds = 7200;
-  static const int _timedEventDefaultRequiredRunners = 3;
+  static const int _timedEventDefaultRequiredRunners = 1;
   bool _hasRequestedTimedEventTimeoutResolution = false;
   Game? _latestGame;
   bool _showTimedEventResultPopup = false;
@@ -379,7 +380,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _isAppInForeground = state == AppLifecycleState.resumed;
-    _maybeUpdatePlayerActiveStatus(isActiveOverride: _isAppInForeground);
+    _maybeUpdatePlayerActiveStatus();
   }
 
   void _maybeNotifyMapPopup({
@@ -408,7 +409,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       _lastReportedPlayerActiveStatus = null;
       return;
     }
-    final shouldBeActive = isActiveOverride ?? _isAppInForeground;
+    final shouldBeActive = isActiveOverride ??
+        (_isAppInForeground || _canReportActiveInBackground);
     if (_lastReportedPlayerActiveUid == resolvedUid &&
         _lastReportedPlayerActiveStatus == shouldBeActive) {
       return;
@@ -441,6 +443,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     ref.watch(playerLocationUpdaterProvider(widget.gameId));
     final players = playersState.valueOrNull;
     final currentUid = auth.currentUser?.uid;
+    final permissionStatus = permissionState.valueOrNull;
+    if (permissionStatus != null) {
+      _canReportActiveInBackground =
+          permissionStatus == LocationPermissionStatus.granted;
+    }
     _maybeUpdatePlayerActiveStatus(uid: currentUid);
     AsyncValue<Player?>? currentPlayerState;
     if (currentUid != null) {
@@ -3073,7 +3080,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     }
     var count = 0;
     for (final player in players) {
-      if (player.role == PlayerRole.runner && player.isActive) {
+      if (player.role == PlayerRole.runner) {
         count++;
       }
     }
