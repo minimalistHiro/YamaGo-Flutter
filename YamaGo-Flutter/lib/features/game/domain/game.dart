@@ -25,6 +25,7 @@ class Game {
     this.killerSeeGeneratorRadiusM,
     this.gameDurationSec,
     this.endResult,
+    this.oniCaptureRadiusMultiplier = 1,
     this.timedEventActive = false,
     this.timedEventActiveStartedAt,
     this.timedEventActiveDurationSec,
@@ -52,6 +53,7 @@ class Game {
   final int? killerSeeGeneratorRadiusM;
   final int? gameDurationSec;
   final GameEndResult? endResult;
+  final double oniCaptureRadiusMultiplier;
   final bool timedEventActive;
   final DateTime? timedEventActiveStartedAt;
   final int? timedEventActiveDurationSec;
@@ -115,6 +117,8 @@ class Game {
           (data['killerSeeGeneratorRadiusM'] as num?)?.toInt(),
       gameDurationSec: (data['gameDurationSec'] as num?)?.toInt(),
       endResult: parseGameEndResult(data['endResult'] as String?),
+      oniCaptureRadiusMultiplier:
+          (data['oniCaptureRadiusMultiplier'] as num?)?.toDouble() ?? 1,
       timedEventActive: data['timedEventActive'] as bool? ?? false,
       timedEventActiveStartedAt: _toDate(data['timedEventActiveStartedAt']),
       timedEventActiveDurationSec:

@@ -455,10 +455,14 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     _maybeClearExpiredTimedEvent(game);
     _handleTimedEventResultChange(game);
     _updatePinClearDuration(game);
-    final captureRadius = game?.captureRadiusM?.toDouble();
-    _latestCaptureRadiusMeters = captureRadius;
     var currentPlayer = currentPlayerState?.valueOrNull;
     currentPlayer ??= _currentPlayer(playersState, currentUid);
+    final captureRadius = _effectiveCaptureRadiusMeters(
+      baseRadiusMeters: game?.captureRadiusM?.toDouble(),
+      game: game,
+      player: currentPlayer,
+    );
+    _latestCaptureRadiusMeters = captureRadius;
     final circleColor = _captureCircleColor(currentPlayer);
     final circles =
         _buildCaptureCircles(locationState, captureRadius, circleColor);
@@ -956,6 +960,24 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
           ),
       ],
     );
+  }
+
+  double? _effectiveCaptureRadiusMeters({
+    required double? baseRadiusMeters,
+    required Game? game,
+    required Player? player,
+  }) {
+    if (baseRadiusMeters == null || baseRadiusMeters <= 0) {
+      return baseRadiusMeters;
+    }
+    if (player == null || player.role != PlayerRole.oni) {
+      return baseRadiusMeters;
+    }
+    final multiplier = game?.oniCaptureRadiusMultiplier;
+    if (multiplier == null || multiplier <= 0) {
+      return baseRadiusMeters;
+    }
+    return baseRadiusMeters * multiplier;
   }
 
   void _updateStatusTicker(bool shouldRun) {

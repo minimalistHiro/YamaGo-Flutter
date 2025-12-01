@@ -56,6 +56,7 @@ class GameEventRepository {
         'timedEventRequiredRunners': requiredRunners,
         'timedEventResult': null,
         'timedEventResultAt': null,
+        'oniCaptureRadiusMultiplier': 1.0,
         'updatedAt': FieldValue.serverTimestamp(),
       });
       final eventRef = gameRef.collection('events').doc();

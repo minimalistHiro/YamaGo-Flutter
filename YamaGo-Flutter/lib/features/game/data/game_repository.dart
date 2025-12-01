@@ -36,6 +36,7 @@ class GameRepository {
       'ownerUid': ownerUid,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
+      'oniCaptureRadiusMultiplier': 1.0,
       'timedEventActive': false,
       'timedEventActiveStartedAt': null,
       'timedEventActiveDurationSec': null,
@@ -141,6 +142,7 @@ class GameRepository {
       'timedEventRequiredRunners': null,
       'timedEventResult': null,
       'timedEventResultAt': null,
+      'oniCaptureRadiusMultiplier': 1.0,
       'updatedAt': FieldValue.serverTimestamp(),
     };
     if (countdownEndAt != null) {
@@ -161,6 +163,7 @@ class GameRepository {
       'timedEventRequiredRunners': null,
       'timedEventResult': null,
       'timedEventResultAt': null,
+      'oniCaptureRadiusMultiplier': 1.0,
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
@@ -180,6 +183,7 @@ class GameRepository {
       'timedEventRequiredRunners': null,
       'timedEventResult': null,
       'timedEventResultAt': null,
+      'oniCaptureRadiusMultiplier': 1.0,
       'updatedAt': FieldValue.serverTimestamp(),
     });
     await _reviveDownedRunners(gameId: gameId);
@@ -195,6 +199,7 @@ class GameRepository {
       'timedEventRequiredRunners': null,
       'timedEventResult': null,
       'timedEventResultAt': null,
+      'oniCaptureRadiusMultiplier': 1.0,
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
@@ -230,6 +235,7 @@ class GameRepository {
         'timedEventRequiredRunners': null,
         'timedEventResult': success ? 'success' : 'failure',
         'timedEventResultAt': FieldValue.serverTimestamp(),
+        'oniCaptureRadiusMultiplier': success ? 1.0 : 2.0,
         'updatedAt': FieldValue.serverTimestamp(),
       });
       final eventRef = gameRef.collection('events').doc();
