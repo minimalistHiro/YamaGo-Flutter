@@ -57,6 +57,192 @@ const SUBCOLLECTION_ACTIVITY_FIELDS = [
   },
 ];
 
+async function handleChatNotification({
+  snapshot,
+  gameId,
+  messageId,
+  channelKey,
+  channelMeta,
+}) {
+  const data = snapshot.data() || {};
+  if (!data || data.type === 'system') {
+    return null;
+  }
+
+  const rawMessage = (data.message || '').toString().trim();
+  if (!rawMessage) {
+    return null;
+  }
+
+  const senderUid = data.uid || '';
+  const senderName = (data.nickname || '').toString().trim() || '仲間';
+  const sanitizedMessage = rawMessage.replace(/\s+/g, ' ').slice(0, 120);
+
+  try {
+    const recipients = await fetchChatRecipients({
+      gameId,
+      senderUid,
+      targetRole: channelMeta.targetRole,
+    });
+
+    if (!recipients) {
+      return null;
+    }
+
+    const notification = {
+      title: channelMeta.title,
+      body: `${senderName}: ${sanitizedMessage}`,
+    };
+    const dataPayload = {
+      gameId,
+      messageId: messageId || '',
+      role: channelMeta.role,
+      senderUid,
+    };
+
+    await sendChatNotificationBatches({
+      gameId,
+      channelKey,
+      channelMeta,
+      notification,
+      dataPayload,
+      tokens: recipients.tokens,
+      tokenOwners: recipients.tokenOwners,
+    });
+  } catch (error) {
+    functions.logger.error('Chat notification handling failed', {
+      error,
+      gameId,
+      channel: channelKey,
+    });
+  }
+
+  return null;
+}
+
+async function fetchChatRecipients({ gameId, senderUid, targetRole }) {
+  let playersQuery = db
+    .collection('games')
+    .doc(gameId)
+    .collection('players');
+  if (targetRole) {
+    playersQuery = playersQuery.where('role', '==', targetRole);
+  }
+  const playersSnap = await playersQuery.get();
+
+  if (playersSnap.empty) {
+    return null;
+  }
+
+  const tokens = [];
+  const tokenOwners = new Map();
+
+  playersSnap.forEach((doc) => {
+    if (doc.id === senderUid) {
+      return;
+    }
+    const playerData = doc.data() || {};
+    const fcmTokens = playerData.fcmTokens;
+    if (!Array.isArray(fcmTokens)) {
+      return;
+    }
+    fcmTokens.forEach((token) => {
+      if (typeof token === 'string' && token.length > 0) {
+        tokens.push(token);
+        if (!tokenOwners.has(token)) {
+          tokenOwners.set(token, doc.id);
+        }
+      }
+    });
+  });
+
+  if (tokens.length === 0) {
+    return null;
+  }
+
+  return { tokens, tokenOwners };
+}
+
+async function sendChatNotificationBatches({
+  gameId,
+  channelKey,
+  channelMeta,
+  notification,
+  dataPayload,
+  tokens,
+  tokenOwners,
+}) {
+  const invalidTokens = new Set();
+  const chunkSize = 500;
+
+  for (let i = 0; i < tokens.length; i += chunkSize) {
+    const chunk = tokens.slice(i, i + chunkSize);
+    try {
+      functions.logger.info('Sending chat notification batch', {
+        gameId,
+        role: channelMeta.role,
+        channel: channelKey,
+        batchSize: chunk.length,
+      });
+      const response = await messaging.sendEachForMulticast({
+        tokens: chunk,
+        notification,
+        data: dataPayload,
+        android: {
+          priority: 'high',
+          notification: {
+            sound: 'default',
+            channelId: 'chat_messages',
+          },
+        },
+        apns: {
+          headers: {
+            'apns-priority': '10',
+            'apns-push-type': 'alert',
+          },
+          payload: {
+            aps: {
+              alert: notification,
+              sound: 'default',
+            },
+          },
+        },
+      });
+      response.responses.forEach((res, idx) => {
+        if (!res.success) {
+          const code = res.error?.code || '';
+          if (
+            code === 'messaging/registration-token-not-registered' ||
+            code === 'messaging/invalid-registration-token'
+          ) {
+            invalidTokens.add(chunk[idx]);
+          } else {
+            functions.logger.error('Chat notification delivery failed', {
+              code,
+              error: res.error,
+              token: chunk[idx],
+              gameId,
+              role: channelMeta.role,
+              channel: channelKey,
+            });
+          }
+        }
+      });
+    } catch (error) {
+      functions.logger.error('Failed to send chat notifications', {
+        error,
+        gameId,
+        role: channelMeta.role,
+        channel: channelKey,
+      });
+    }
+  }
+
+  if (invalidTokens.size > 0) {
+    await removeInvalidTokens(gameId, invalidTokens, tokenOwners);
+  }
+}
+
 exports.onChatMessageCreated = functions
   .region('us-central1')
   .firestore.document('games/{gameId}/{collectionId}/{messageId}')
@@ -67,147 +253,16 @@ exports.onChatMessageCreated = functions
       return null;
     }
 
-    const data = snapshot.data() || {};
-    if (!data || data.type === 'system') {
-      return null;
-    }
-
-    const rawMessage = (data.message || '').toString().trim();
-    if (!rawMessage) {
-      return null;
-    }
-
-    const senderUid = data.uid || '';
-    const senderName = (data.nickname || '').toString().trim() || '仲間';
-    const sanitizedMessage = rawMessage.replace(/\s+/g, ' ').slice(0, 120);
-
-    try {
-      let playersQuery = db
-        .collection('games')
-        .doc(gameId)
-        .collection('players');
-      if (channelMeta.targetRole) {
-        playersQuery = playersQuery.where('role', '==', channelMeta.targetRole);
-      }
-      const playersSnap = await playersQuery.get();
-
-      if (playersSnap.empty) {
-        return null;
-      }
-
-      const tokens = [];
-      const tokenOwners = new Map();
-
-      playersSnap.forEach((doc) => {
-        if (doc.id === senderUid) {
-          return;
-        }
-        const playerData = doc.data() || {};
-        const fcmTokens = playerData.fcmTokens;
-        if (Array.isArray(fcmTokens)) {
-          fcmTokens.forEach((token) => {
-            if (typeof token === 'string' && token.length > 0) {
-              tokens.push(token);
-              if (!tokenOwners.has(token)) {
-                tokenOwners.set(token, doc.id);
-              }
-            }
-          });
-        }
-      });
-
-      if (tokens.length === 0) {
-        return null;
-      }
-
-      const notification = {
-        title: channelMeta.title,
-        body: `${senderName}: ${sanitizedMessage}`,
-      };
-      const dataPayload = {
-        gameId,
-        messageId: messageId || '',
-        role: channelMeta.role,
-        senderUid,
-      };
-
-      const invalidTokens = new Set();
-      const chunkSize = 500;
-      for (let i = 0; i < tokens.length; i += chunkSize) {
-        const chunk = tokens.slice(i, i + chunkSize);
-        try {
-          functions.logger.info('Sending chat notification batch', {
-            gameId,
-            role: channelMeta.role,
-            batchSize: chunk.length,
-          });
-          const response = await messaging.sendEachForMulticast({
-            tokens: chunk,
-            notification,
-            data: dataPayload,
-            android: {
-              priority: 'high',
-              notification: {
-                sound: 'default',
-                channelId: 'chat_messages',
-              },
-            },
-            apns: {
-              headers: {
-                'apns-priority': '10',
-                'apns-push-type': 'alert',
-              },
-              payload: {
-                aps: {
-                  alert: notification,
-                  sound: 'default',
-                },
-              },
-            },
-          });
-          response.responses.forEach((res, idx) => {
-            if (!res.success) {
-              const code = res.error?.code || '';
-              if (
-                code === 'messaging/registration-token-not-registered' ||
-                code === 'messaging/invalid-registration-token'
-              ) {
-                invalidTokens.add(chunk[idx]);
-              } else {
-                functions.logger.error('Chat notification delivery failed', {
-                  code,
-                  error: res.error,
-                  token: chunk[idx],
-                  gameId,
-                  role: channelMeta.role,
-                });
-              }
-            }
-          });
-        } catch (error) {
-          functions.logger.error('Failed to send chat notifications', {
-            error,
-            gameId,
-            role: channelMeta.role,
-          });
-        }
-      }
-
-      if (invalidTokens.size > 0) {
-        await removeInvalidTokens(gameId, invalidTokens, tokenOwners);
-      }
-    } catch (error) {
-      functions.logger.error('Chat notification handling failed', {
-        error,
-        gameId,
-        collectionId,
-      });
-    }
-
-    return null;
+    return handleChatNotification({
+      snapshot,
+      gameId,
+      messageId,
+      channelKey: collectionId,
+      channelMeta,
+    });
   });
 
-exports.notifyInactivePlayersOnGameStart = functions
+exports.notifyPlayersOnGameStatusChange = functions
   .region('us-central1')
   .firestore.document('games/{gameId}')
   .onUpdate(async (change, context) => {
@@ -218,7 +273,11 @@ exports.notifyInactivePlayersOnGameStart = functions
     }
     const previousStatus = beforeData?.status;
     const currentStatus = afterData.status;
-    if (currentStatus !== 'running' || previousStatus === 'running') {
+    const shouldNotifyStart =
+      currentStatus === 'running' && previousStatus !== 'running';
+    const shouldNotifyEnd =
+      currentStatus === 'ended' && previousStatus !== 'ended';
+    if (!shouldNotifyStart && !shouldNotifyEnd) {
       return null;
     }
 
@@ -243,9 +302,6 @@ exports.notifyInactivePlayersOnGameStart = functions
 
       playersSnapshot.forEach((doc) => {
         const data = doc.data() || {};
-        if (data.active !== false) {
-          return;
-        }
         const playerTokens = data.fcmTokens;
         if (!Array.isArray(playerTokens)) {
           return;
@@ -261,93 +317,53 @@ exports.notifyInactivePlayersOnGameStart = functions
       });
 
       if (tokens.length === 0) {
-        functions.logger.info(
-          'No inactive players to notify on game start',
-          { gameId }
-        );
+        functions.logger.info('No players to notify on status change', {
+          gameId,
+        });
         return null;
       }
 
-      const notification = {
-        title: 'ゲームが開始しました',
-        body: 'アプリを開いてマップを確認しましょう。',
-      };
-      const dataPayload = {
-        type: 'game_start',
-        gameId,
-      };
-
       const invalidTokens = new Set();
-      const chunkSize = 500;
-      for (let i = 0; i < tokens.length; i += chunkSize) {
-        const chunk = tokens.slice(i, i + chunkSize);
-        try {
-          functions.logger.info('Sending game start notification batch', {
+      if (shouldNotifyStart) {
+        await sendStatusNotificationBatch({
+          gameId,
+          tokens,
+          tokenOwners,
+          invalidTokens,
+          notification: {
+            title: 'ゲームが開始しました',
+            body: 'アプリを開いてマップを確認しましょう。',
+          },
+          dataPayload: {
+            type: 'game_start',
             gameId,
-            batchSize: chunk.length,
-          });
-          const response = await messaging.sendEachForMulticast({
-            tokens: chunk,
-            notification,
-            data: dataPayload,
-            android: {
-              priority: 'high',
-              notification: {
-                sound: 'default',
-                channelId: 'map_events',
-              },
-            },
-            apns: {
-              headers: {
-                'apns-priority': '10',
-                'apns-push-type': 'alert',
-              },
-              payload: {
-                aps: {
-                  alert: notification,
-                  sound: 'default',
-                  category: 'GAME_START',
-                },
-              },
-            },
-          });
-          response.responses.forEach((res, idx) => {
-            if (!res.success) {
-              const code = res.error?.code || '';
-              if (
-                code === 'messaging/registration-token-not-registered' ||
-                code === 'messaging/invalid-registration-token'
-              ) {
-                invalidTokens.add(chunk[idx]);
-              } else {
-                functions.logger.error(
-                  'Game start notification delivery failed',
-                  {
-                    code,
-                    error: res.error,
-                    token: chunk[idx],
-                    gameId,
-                  }
-                );
-              }
-            }
-          });
-        } catch (error) {
-          functions.logger.error(
-            'Failed to send game start notification batch',
-            {
-              error,
-              gameId,
-            }
-          );
-        }
+          },
+          apnsCategory: 'GAME_START',
+        });
+      }
+      if (shouldNotifyEnd) {
+        await sendStatusNotificationBatch({
+          gameId,
+          tokens,
+          tokenOwners,
+          invalidTokens,
+          notification: {
+            title: 'ゲームが終了しました',
+            body: '結果を確認しましょう。',
+          },
+          dataPayload: {
+            type: 'game_end',
+            gameId,
+          },
+          apnsCategory: 'GAME_END',
+        });
       }
 
       if (invalidTokens.size > 0) {
         await removeInvalidTokens(gameId, invalidTokens, tokenOwners);
       }
     } catch (error) {
-      functions.logger.error('Game start notification handling failed', {
+      functions.logger.error('Game status notification handling failed', {
         error,
         gameId,
       });
@@ -670,6 +686,78 @@ function convertToDate(value) {
     }
   }
   return null;
+}
+
+async function sendStatusNotificationBatch({
+  gameId,
+  tokens,
+  tokenOwners,
+  invalidTokens,
+  notification,
+  dataPayload,
+  apnsCategory,
+}) {
+  const chunkSize = 500;
+  for (let i = 0; i < tokens.length; i += chunkSize) {
+    const chunk = tokens.slice(i, i + chunkSize);
+    try {
+      functions.logger.info('Sending status notification batch', {
+        gameId,
+        batchSize: chunk.length,
+        type: dataPayload?.type ?? 'unknown',
+      });
+      const response = await messaging.sendEachForMulticast({
+        tokens: chunk,
+        notification,
+        data: dataPayload,
+        android: {
+          priority: 'high',
+          notification: {
+            sound: 'default',
+            channelId: 'map_events',
+          },
+        },
+        apns: {
+          headers: {
+            'apns-priority': '10',
+            'apns-push-type': 'alert',
+          },
+          payload: {
+            aps: {
+              alert: notification,
+              sound: 'default',
+              category: apnsCategory,
+            },
+          },
+        },
+      });
+      response.responses.forEach((res, idx) => {
+        if (!res.success) {
+          const code = res.error?.code || '';
+          if (
+            code === 'messaging/registration-token-not-registered' ||
+            code === 'messaging/invalid-registration-token'
+          ) {
+            invalidTokens.add(chunk[idx]);
+          } else {
+            functions.logger.error('Status notification delivery failed', {
+              code,
+              error: res.error,
+              token: chunk[idx],
+              gameId,
+              type: dataPayload?.type ?? 'unknown',
+            });
+          }
+        }
+      });
+    } catch (error) {
+      functions.logger.error('Failed to send status notification batch', {
+        error,
+        gameId,
+        type: dataPayload?.type ?? 'unknown',
+      });
+    }
+  }
 }
 
 function toInt(value) {
