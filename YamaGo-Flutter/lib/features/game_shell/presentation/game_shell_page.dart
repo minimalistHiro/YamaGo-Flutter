@@ -2963,7 +2963,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     if (totalRunnerCount <= 0) {
       return _timedEventDefaultRequiredRunners;
     }
-    return _timedEventRandom.nextInt(totalRunnerCount) + 1;
+    final halfCount = (totalRunnerCount + 1) ~/ 2;
+    return _timedEventRandom.nextInt(halfCount) + 1;
   }
 
   GameEndResult? _resolveGameEndResult({
