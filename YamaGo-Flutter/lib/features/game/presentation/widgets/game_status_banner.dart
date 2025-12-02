@@ -97,6 +97,29 @@ class GameStatusBanner extends ConsumerWidget {
     Game game, {
     required DateTime referenceTime,
   }) {
+    final missionText = _eventMissionLabel(game);
+    final detailsText = _eventDetailsLabel(
+      game,
+      referenceTime: referenceTime,
+    );
+    if (missionText != null && detailsText != null) {
+      return '$missionText\n$detailsText';
+    }
+    return missionText ?? detailsText ?? 'イベントミッションが進行中です';
+  }
+
+  String? _eventMissionLabel(Game game) {
+    if (!game.timedEventActive) return null;
+    final requiredRunners = game.timedEventRequiredRunners;
+    final requiredLabel =
+        requiredRunners != null ? '$requiredRunners人' : '複数人';
+    return '逃走者$requiredLabel、水色の発電機を解除せよ';
+  }
+
+  String? _eventDetailsLabel(
+    Game game, {
+    required DateTime referenceTime,
+  }) {
     final phaseLabel = _eventPhaseLabel(game.timedEventActiveQuarter);
     final remaining = _eventRemainingSeconds(game, referenceTime);
     final remainingLabel =
@@ -110,7 +133,7 @@ class GameStatusBanner extends ConsumerWidget {
     if (remainingLabel != null) {
       return 'イベントミッション\n残り時間 $remainingLabel';
     }
-    return 'イベントミッションが進行中です';
+    return null;
   }
 
   String? _eventPhaseLabel(int? quarter) {

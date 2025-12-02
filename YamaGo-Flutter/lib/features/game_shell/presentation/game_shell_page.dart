@@ -6379,6 +6379,14 @@ const List<_GameTutorialSlideData> _tutorialSlides = [
     assetPath: 'assets/tutorial/page3.png',
   ),
   _GameTutorialSlideData(
+    title: '仲間の救出',
+    description:
+        '逃走者は鬼に捕まると「ダウン中」になり、一定時間が経つか救出されるまで行動不能になります。'
+        'ダウン中の仲間を自分の捕獲範囲（発電機解除と同じ範囲）に収めると救出ゲージが進行し、完了すると仲間は復帰します。'
+        '救出中は鬼に見つかりやすいため、ほかの仲間と連携して周囲を警戒しましょう。',
+    assetPath: 'assets/tutorial/tutorial4.png',
+  ),
+  _GameTutorialSlideData(
     title: 'ゲームを始めるには',
     description:
         'オーナーがゲームスタートボタンを押すとゲームが始まります。オーナーがいない場合は、'
