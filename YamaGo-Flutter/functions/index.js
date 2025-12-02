@@ -69,6 +69,8 @@ const YAMANOTE_BOUNDS = {
 };
 const PIN_DUPLICATE_PRECISION = 6;
 const MAX_PIN_COUNT = 20;
+const TIMED_EVENT_TIMEOUT_SWEEP_INTERVAL_MS = 15 * 1000;
+const TIMED_EVENT_TIMEOUT_SWEEP_COUNT = 4;
 
 async function handleChatNotification({
   snapshot,
@@ -758,6 +760,46 @@ exports.processGameAutomations = functions
     return null;
   });
 
+exports.processTimedEventTimeouts = functions
+  .region('us-central1')
+  .runWith({
+    timeoutSeconds: 540,
+    memory: '512MB',
+  })
+  .pubsub.schedule('*/1 * * * *')
+  .timeZone('Asia/Tokyo')
+  .onRun(async () => {
+    for (let i = 0; i < TIMED_EVENT_TIMEOUT_SWEEP_COUNT; i += 1) {
+      await sweepActiveTimedEventTimeouts();
+      if (i < TIMED_EVENT_TIMEOUT_SWEEP_COUNT - 1) {
+        await wait(TIMED_EVENT_TIMEOUT_SWEEP_INTERVAL_MS);
+      }
+    }
+    return null;
+  });
+
+async function sweepActiveTimedEventTimeouts() {
+  const snapshot = await db
+    .collection('games')
+    .where('status', '==', 'running')
+    .where('timedEventActive', '==', true)
+    .get();
+  if (snapshot.empty) {
+    return;
+  }
+  for (const doc of snapshot.docs) {
+    const data = doc.data() || {};
+    try {
+      await maybeResolveTimedEventTimeout(doc.id, data);
+    } catch (error) {
+      functions.logger.error('Failed to resolve timed event timeout sweep', {
+        gameId: doc.id,
+        error,
+      });
+    }
+  }
+}
+
 async function getLastActivityForGame(doc) {
   const data = doc.data() || {};
   const timestamps = [];
@@ -917,6 +959,12 @@ function toInt(value) {
     return 0;
   }
   return Math.trunc(parsed);
+}
+
+function wait(durationMs) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, durationMs);
+  });
 }
 
 function formatDurationLabel(seconds) {
@@ -1177,10 +1225,9 @@ function buildTimedEventMetadata({
   const requiredRunners = totalRunnerCount > 0
     ? Math.max(1, Math.floor(Math.random() * totalRunnerCount) + 1)
     : DEFAULT_TIMED_EVENT_REQUIRED_RUNNERS;
-  const eventDurationSeconds = Math.max(
-    1,
-    Math.round(totalDurationSeconds / 8),
-  );
+  const baseDurationSeconds = Math.floor(totalDurationSeconds / 8);
+  const truncatedDurationSeconds = Math.floor(baseDurationSeconds / 60) * 60;
+  const eventDurationSeconds = Math.max(1, truncatedDurationSeconds);
   const percentProgress = Math.min(100, quarterIndex * 25);
   const computedSeconds = Math.round((totalDurationSeconds / 4) * quarterIndex);
   const clampedSeconds = Math.max(

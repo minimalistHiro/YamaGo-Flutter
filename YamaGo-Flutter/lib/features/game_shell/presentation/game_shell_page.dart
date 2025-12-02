@@ -278,6 +278,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   double? _latestCaptureRadiusMeters;
   PlayerRole? _latestPlayerRole;
   GameStatus? _latestGameStatus;
+  bool _latestTimedEventActive = false;
+  String? _latestTimedEventTargetPinId;
   bool _hasInitializedGameStatus = false;
   bool _showGameEndPopup = false;
   bool _showGameSummaryPopup = false;
@@ -507,6 +509,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     }
     _latestPlayerRole = currentPlayer?.role;
     _latestGameStatus = game?.status;
+    _latestTimedEventActive = game?.timedEventActive ?? false;
+    _latestTimedEventTargetPinId = game?.timedEventTargetPinId;
     _handleGameEndStatusChange(
       previousStatus: previousGameStatus,
       currentStatus: _latestGameStatus,
@@ -621,49 +625,52 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
         _showTimedEventResultPopup;
 
     final actionButtons = <Widget>[];
-    if (showStartButton) {
-      actionButtons.add(
-        _MapStartGameButton(
-          gameId: widget.gameId,
-          countdownSeconds: countdownSeconds,
-          isLocked: isPopupVisible,
-        ),
-      );
-    }
-    if (captureTarget != null) {
-      actionButtons.add(
-        _CaptureActionButton(
-          targetName: captureTarget.nickname,
-          distanceMeters: captureTargetDistance,
-          isLoading: _isCapturing,
-          onPressed: (_isCapturing || isPopupVisible)
-              ? null
-              : () => _handleCapturePressed(captureTarget),
-        ),
-      );
-    }
-    if (rescueTarget != null) {
-      actionButtons.add(
-        _RescueActionButton(
-          targetName: rescueTarget.nickname,
-          distanceMeters: rescueTargetDistance,
-          isLoading: _isRescuing,
-          onPressed: (_isRescuing || isPopupVisible)
-              ? null
-              : () => _handleRescuePressed(rescueTarget),
-        ),
-      );
-    }
-    if (nearbyPin != null && !_isClearingPin) {
-      actionButtons.add(
-        _ClearPinButton(
-          distanceMeters: clearButtonDistance,
-          isLoading: _isClearingPin,
-          countdownSeconds: _pinClearRemainingSeconds,
-          onPressed:
-              isPopupVisible ? null : () => _handleClearPinPressed(nearbyPin),
-        ),
-      );
+    if (!isPopupVisible) {
+      if (showStartButton) {
+        actionButtons.add(
+          _MapStartGameButton(
+            gameId: widget.gameId,
+            countdownSeconds: countdownSeconds,
+            isLocked: isPopupVisible,
+          ),
+        );
+      }
+      if (captureTarget != null) {
+        actionButtons.add(
+          _CaptureActionButton(
+            targetName: captureTarget.nickname,
+            distanceMeters: captureTargetDistance,
+            isLoading: _isCapturing,
+            onPressed: (_isCapturing || isPopupVisible)
+                ? null
+                : () => _handleCapturePressed(captureTarget),
+          ),
+        );
+      }
+      if (rescueTarget != null) {
+        actionButtons.add(
+          _RescueActionButton(
+            targetName: rescueTarget.nickname,
+            distanceMeters: rescueTargetDistance,
+            isLoading: _isRescuing,
+            onPressed: (_isRescuing || isPopupVisible)
+                ? null
+                : () => _handleRescuePressed(rescueTarget),
+          ),
+        );
+      }
+      if (nearbyPin != null && !_isClearingPin) {
+        actionButtons.add(
+          _ClearPinButton(
+            distanceMeters: clearButtonDistance,
+            isLoading: _isClearingPin,
+            countdownSeconds: _pinClearRemainingSeconds,
+            onPressed: isPopupVisible
+                ? null
+                : () => _handleClearPinPressed(nearbyPin),
+          ),
+        );
+      }
     }
     final int actionCount = actionButtons.length;
     final double myLocationButtonBottom = switch (actionCount) {
@@ -1502,6 +1509,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       );
       _resetPinClearingState();
       _showSnackBar('発電所を解除しました');
+      unawaited(_maybeResolveTimedEventOnPinClear(pinId));
     } catch (error) {
       try {
         await repo.updatePinStatus(
@@ -1515,6 +1523,33 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       _resetPinClearingState();
       final message = error is StateError ? error.message : error.toString();
       _showSnackBar('発電所の解除に失敗しました: $message');
+    }
+  }
+
+  Future<void> _maybeResolveTimedEventOnPinClear(String pinId) async {
+    if (!_latestTimedEventActive) {
+      return;
+    }
+    final targetPinId = _latestTimedEventTargetPinId;
+    if (targetPinId == null || targetPinId != pinId) {
+      return;
+    }
+    if (_latestPlayerRole != PlayerRole.runner) {
+      return;
+    }
+    try {
+      final repo = ref.read(gameRepositoryProvider);
+      final resolved = await repo.resolveTimedEvent(
+        gameId: widget.gameId,
+        success: true,
+        expectedTargetPinId: targetPinId,
+      );
+      if (!resolved) {
+        debugPrint('Timed event resolve skipped (not active or mismatch)');
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Failed to resolve timed event after pin clear: $error');
+      debugPrint('$stackTrace');
     }
   }
 
@@ -2721,7 +2756,9 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     final totalRunnerCount = _countTotalRunners(players);
     final requiredRunners = requiredRunnersOverride ??
         _resolveTimedEventRequiredRunners(totalRunnerCount);
-    final computedDuration = math.max(1, (totalDurationSeconds / 8).round());
+    final baseDurationSeconds = totalDurationSeconds ~/ 8;
+    final truncatedDurationSeconds = (baseDurationSeconds ~/ 60) * 60;
+    final computedDuration = math.max(1, truncatedDurationSeconds);
     final eventDurationSeconds = math.max(
       1,
       eventDurationSecondsOverride ?? computedDuration,
