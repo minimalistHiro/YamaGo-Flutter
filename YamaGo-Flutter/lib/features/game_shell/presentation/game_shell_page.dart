@@ -3356,104 +3356,112 @@ class _TimedEventPopupState extends State<_TimedEventPopup> {
         ),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'イベント発生',
-                  style: theme.textTheme.titleLarge
-                      ?.copyWith(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '${widget.data.quarterLabel} · ゲーム経過${widget.data.percentProgress}% '
-                  '（開始から${widget.data.eventTimeLabel}）',
-                  style: theme.textTheme.bodySmall
-                      ?.copyWith(color: theme.hintColor),
-                ),
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 4,
-                    children: [
-                      _TimedEventInfoChip(
-                        label: '必要人数',
-                        value: '${widget.data.requiredRunners}人',
-                      ),
-                      _TimedEventInfoChip(
-                        label: '制限時間',
-                        value: widget.data.eventDurationLabel,
-                      ),
-                      if (widget.data.totalRunnerCount > 0)
-                        _TimedEventInfoChip(
-                          label: '逃走者',
-                          value: '${widget.data.totalRunnerCount}人',
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  height: 360,
-                  child: PageView.builder(
-                    controller: _pageController,
-                    itemCount: slides.length,
-                    onPageChanged: (index) {
-                      setState(() {
-                        _currentPage = index;
-                      });
-                    },
-                    itemBuilder: (context, index) {
-                      final slide = slides[index];
-                      return _TimedEventSlide(slide: slide);
-                    },
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: List.generate(slides.length, (index) {
-                    final isActive = index == _currentPage;
-                    final color = isActive
-                        ? theme.colorScheme.primary
-                        : theme.dividerColor;
-                    return AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      margin: const EdgeInsets.symmetric(
-                        horizontal: 4,
-                        vertical: 8,
-                      ),
-                      height: 8,
-                      width: isActive ? 24 : 8,
-                      decoration: BoxDecoration(
-                        color: color,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                    );
-                  }),
-                ),
-                const SizedBox(height: 4),
-                Row(
+          child: Stack(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    TextButton(
-                      onPressed: _currentPage == 0 ? null : _handleBack,
-                      child: const Text('戻る'),
+                    Text(
+                      'イベント発生',
+                      style: theme.textTheme.titleLarge
+                          ?.copyWith(fontWeight: FontWeight.bold),
                     ),
-                    const Spacer(),
-                    ElevatedButton(
-                      onPressed: _handleNext,
-                      child: Text(
-                        _currentPage == slides.length - 1 ? '閉じる' : '次へ',
+                    const SizedBox(height: 8),
+                    Text(
+                      '${widget.data.quarterLabel} · ゲーム経過${widget.data.percentProgress}% '
+                      '（開始から${widget.data.eventTimeLabel}）',
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: theme.hintColor),
+                    ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        children: [
+                          _TimedEventInfoChip(
+                            label: '必要人数',
+                            value: '${widget.data.requiredRunners}人',
+                          ),
+                          _TimedEventInfoChip(
+                            label: '制限時間',
+                            value: widget.data.eventDurationLabel,
+                          ),
+                        ],
                       ),
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      height: 360,
+                      child: PageView.builder(
+                        controller: _pageController,
+                        itemCount: slides.length,
+                        onPageChanged: (index) {
+                          setState(() {
+                            _currentPage = index;
+                          });
+                        },
+                        itemBuilder: (context, index) {
+                          final slide = slides[index];
+                          return _TimedEventSlide(slide: slide);
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(slides.length, (index) {
+                        final isActive = index == _currentPage;
+                        final color = isActive
+                            ? theme.colorScheme.primary
+                            : theme.dividerColor;
+                        return AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          margin: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 8,
+                          ),
+                          height: 8,
+                          width: isActive ? 24 : 8,
+                          decoration: BoxDecoration(
+                            color: color,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        );
+                      }),
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        TextButton(
+                          onPressed: _currentPage == 0 ? null : _handleBack,
+                          child: const Text('戻る'),
+                        ),
+                        const Spacer(),
+                        ElevatedButton(
+                          onPressed: _handleNext,
+                          child: Text(
+                            _currentPage == slides.length - 1 ? '閉じる' : '次へ',
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
-            ),
+              ),
+              Positioned(
+                top: 0,
+                right: 0,
+                child: IconButton(
+                  tooltip: '閉じる',
+                  onPressed: widget.onClose,
+                  icon: const Icon(Icons.close),
+                ),
+              ),
+            ],
           ),
         ),
       ),
