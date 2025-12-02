@@ -1444,6 +1444,18 @@ async function resolveTimedEventFromServer(gameId, success, expectedTargetPinId)
     };
   });
   if (resolved) {
+    try {
+      const randomized = await randomizePendingPinLocations(gameId);
+      functions.logger.info('Randomized pending pins after timed event', {
+        gameId,
+        randomized,
+      });
+    } catch (error) {
+      functions.logger.error('Failed to randomize pending pins after timed event', {
+        error,
+        gameId,
+      });
+    }
     functions.logger.info('Resolved timed event automatically', {
       gameId,
       quarter: resolved.quarter,
@@ -1547,9 +1559,56 @@ async function reseedPinsWithRandomLocations(gameId, targetCount) {
   }
 }
 
-function generatePinLocations(count) {
+async function randomizePendingPinLocations(gameId) {
+  const pinsRef = db.collection('games').doc(gameId).collection('pins');
+  const snapshot = await pinsRef.get();
+  if (snapshot.empty) {
+    return 0;
+  }
+  const reservedKeys = new Set();
+  const pendingDocs = [];
+  snapshot.docs.forEach((doc) => {
+    const data = doc.data() || {};
+    const lat = typeof data.lat === 'number' ? data.lat : null;
+    const lng = typeof data.lng === 'number' ? data.lng : null;
+    if (isPinCleared(data)) {
+      if (lat !== null && lng !== null) {
+        reservedKeys.add(formatPinLocationKey(lat, lng));
+      }
+      return;
+    }
+    pendingDocs.push(doc);
+  });
+  if (pendingDocs.length === 0) {
+    return 0;
+  }
+  const locations = generatePinLocations(pendingDocs.length, reservedKeys);
+  const updates = Math.min(locations.length, pendingDocs.length);
+  if (updates === 0) {
+    return 0;
+  }
+  const batch = db.batch();
+  for (let i = 0; i < updates; i += 1) {
+    const doc = pendingDocs[i];
+    const location = locations[i];
+    if (!location || !doc?.ref) {
+      continue;
+    }
+    batch.update(doc.ref, {
+      lat: location.lat,
+      lng: location.lng,
+      status: 'pending',
+      cleared: false,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  }
+  await batch.commit();
+  return updates;
+}
+
+function generatePinLocations(count, existingKeys) {
   const locations = [];
-  const usedKeys = new Set();
+  const usedKeys = new Set(existingKeys || []);
   const maxAttempts = Math.max(count * 200, 200);
   let attempts = 0;
   while (locations.length < count && attempts < maxAttempts) {

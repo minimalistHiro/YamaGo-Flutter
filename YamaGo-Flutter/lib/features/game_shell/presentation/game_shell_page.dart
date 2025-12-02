@@ -3266,8 +3266,8 @@ class _TimedEventResultPopup extends StatelessWidget {
     final isSuccess = data.result == TimedEventResult.success;
     final title = isSuccess ? 'イベント成功' : 'イベント失敗';
     final description = isSuccess
-        ? '未解除の残りの発電機の場所が変わりました。新しい配置を確認してください。'
-        : '鬼の捕獲半径が次のイベントまで2倍になり、未解除の発電機の場所も変わりました。警戒を強めましょう。';
+        ? '未解除の残りの発電機の場所が新しく再配置されました。最新の位置を確認してください。'
+        : '鬼の捕獲半径が次のイベントまで2倍になり、未解除の発電機の場所も再配置されています。警戒を強めましょう。';
     final icon = isSuccess ? Icons.bolt : Icons.warning_amber;
     final iconColor = isSuccess ? const Color(0xFF22B59B) : theme.colorScheme.error;
 
