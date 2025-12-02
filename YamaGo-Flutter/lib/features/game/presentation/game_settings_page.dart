@@ -38,6 +38,10 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
   static const _defaultGeneratorClearSeconds = 180;
   static const _maxGeneratorClearSeconds = 30 * 60 + 59;
   static const _defaultGameDurationMinutes = 120;
+  static const _minGameDurationMinutes = 20;
+  static const _maxGameDurationMinutes = 480;
+  static const _minCountdownSeconds = 60;
+  static const _maxCountdownSeconds = 5 * 60 * 60;
 
   bool _formInitialized = false;
   double _pinCount = _defaultPinCount.toDouble();
@@ -50,8 +54,10 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
   double _gameDurationMinutes = _defaultGameDurationMinutes.toDouble();
   double _generatorClearDurationSeconds =
       _defaultGeneratorClearSeconds.toDouble();
-  int _countdownMinutes = _defaultCountdownSeconds ~/ 60;
-  int _countdownSeconds = _defaultCountdownSeconds % 60;
+
+  int _countdownHours = _defaultCountdownSeconds ~/ 3600;
+  int _countdownMinutes =
+      (_defaultCountdownSeconds % 3600) ~/ 60;
   int? _initialPinCount;
 
   bool _isSaving = false;
@@ -202,15 +208,15 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
       if (!mounted) return;
       final countdownSeconds =
           (game.countdownDurationSec ?? _defaultCountdownSeconds)
-              .clamp(0, 24 * 60 * 60);
+              .clamp(_minCountdownSeconds, _maxCountdownSeconds);
       final gameDurationMinutes =
           ((game.gameDurationSec ?? (_defaultGameDurationMinutes * 60)) / 60)
-              .clamp(1, 480)
+              .clamp(_minGameDurationMinutes, _maxGameDurationMinutes)
               .toDouble();
       setState(() {
         _pinCount = (game.pinCount ?? _defaultPinCount).clamp(1, 20).toDouble();
         _captureRadius = (game.captureRadiusM ?? _defaultCaptureRadius)
-            .clamp(10, 200)
+            .clamp(10, 1000)
             .toDouble();
         _runnerSeeKiller =
             (game.runnerSeeKillerRadiusM ?? _defaultRunnerSeeKiller)
@@ -237,8 +243,8 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
             (game.generatorClearDurationSec ?? _defaultGeneratorClearSeconds)
                 .clamp(10, _maxGeneratorClearSeconds)
                 .toDouble();
-        _countdownMinutes = countdownSeconds ~/ 60;
-        _countdownSeconds = countdownSeconds % 60;
+        _countdownHours = countdownSeconds ~/ 3600;
+        _countdownMinutes = (countdownSeconds % 3600) ~/ 60;
         _formInitialized = true;
         _initialPinCount ??= _pinCount.toInt();
       });
@@ -296,13 +302,21 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
   Widget _buildGameDurationCard() {
     final normalizedMinutes =
         _gameDurationMinutes.isFinite ? _gameDurationMinutes.round() : 120;
-    final totalMinutes = _clampInt(normalizedMinutes, 1, 480);
+    final totalMinutes = _clampInt(
+      normalizedMinutes,
+      _minGameDurationMinutes,
+      _maxGameDurationMinutes,
+    );
     final hours = totalMinutes ~/ 60;
     final minutes = totalMinutes % 60;
-    final hourOptions = List<int>.generate(9, (index) => index);
+    final hourOptions = List<int>.generate(
+      _maxGameDurationMinutes ~/ 60 + 1,
+      (index) => index,
+    );
     final minuteOptions = _gameDurationMinuteOptions(hours);
-    final selectedMinutes =
-        minuteOptions.contains(minutes) ? minutes : minuteOptions.first;
+    final selectedMinutes = minuteOptions.contains(minutes)
+        ? minutes
+        : minuteOptions.first;
     if (selectedMinutes != minutes) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -368,7 +382,7 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
             const SizedBox(height: 8),
             const Text(
               'ゲーム開始から終了までの制限時間です。'
-              '1分〜8時間の範囲で指定できます（推奨: 120分）。',
+              '20分〜8時間の範囲で20分刻みで指定できます（推奨: 120分）。',
               style: TextStyle(fontSize: 12),
             ),
           ],
@@ -482,8 +496,8 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
             Text('半径: ${_captureRadius.toInt()}m'),
             Slider(
               min: 10,
-              max: 200,
-              divisions: 19,
+              max: 1000,
+              divisions: 99,
               label: '${_captureRadius.toInt()}m',
               value: _captureRadius,
               onChanged: _isSaving
@@ -494,7 +508,7 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: const [
                 Text('10m'),
-                Text('200m'),
+                Text('1000m'),
               ],
             ),
             const SizedBox(height: 8),
@@ -557,7 +571,8 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
 
   Widget _buildCountdownCard() {
     final textTheme = Theme.of(context).textTheme;
-    final items = List.generate(60, (index) => index);
+    final hourOptions = List.generate(6, (index) => index);
+    final minuteOptions = _minuteOptionsForHours(_countdownHours);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -572,8 +587,36 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
             Row(
               children: [
                 DropdownButton<int>(
+                  value: _countdownHours,
+                  items: hourOptions
+                      .map(
+                        (value) => DropdownMenuItem<int>(
+                          value: value,
+                          child: Text('$value'),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _isSaving
+                      ? null
+                      : (value) {
+                          if (value == null) return;
+                          setState(() {
+                            _countdownHours = value;
+                            final nextMinuteOptions =
+                                _minuteOptionsForHours(value);
+                            if (!nextMinuteOptions
+                                .contains(_countdownMinutes)) {
+                              _countdownMinutes = nextMinuteOptions.first;
+                            }
+                          });
+                        },
+                ),
+                const SizedBox(width: 8),
+                const Text('時間'),
+                const SizedBox(width: 24),
+                DropdownButton<int>(
                   value: _countdownMinutes,
-                  items: items
+                  items: minuteOptions
                       .map(
                         (value) => DropdownMenuItem<int>(
                           value: value,
@@ -590,37 +633,17 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
                 ),
                 const SizedBox(width: 8),
                 const Text('分'),
-                const SizedBox(width: 24),
-                DropdownButton<int>(
-                  value: _countdownSeconds,
-                  items: items
-                      .map(
-                        (value) => DropdownMenuItem<int>(
-                          value: value,
-                          child: Text('$value'),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: _isSaving
-                      ? null
-                      : (value) {
-                          if (value == null) return;
-                          setState(() => _countdownSeconds = value);
-                        },
-                ),
-                const SizedBox(width: 8),
-                const Text('秒'),
               ],
             ),
             const SizedBox(height: 12),
             Text(
-              '合計: ${_countdownMinutes * 60 + _countdownSeconds} 秒'
-              ' (${_countdownMinutes}分${_countdownSeconds}秒)',
+              _countdownSummaryLabel(),
               style: textTheme.bodySmall,
             ),
             const SizedBox(height: 8),
             const Text(
-              'ゲーム開始ボタンを押してからカウントダウンが終了するまでの時間です。',
+              'ゲーム開始ボタンを押してからカウントダウンが終了するまでの時間です。'
+              '1分〜5時間の範囲で設定できます。',
               style: TextStyle(fontSize: 12),
             ),
           ],
@@ -628,6 +651,31 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
       ),
     );
   }
+
+  List<int> _minuteOptionsForHours(int hours) {
+    if (hours <= 0) {
+      return List.generate(59, (index) => index + 1);
+    }
+    if (hours >= 5) {
+      return const [0];
+    }
+    return List.generate(60, (index) => index);
+  }
+
+  String _countdownSummaryLabel() {
+    final totalSeconds = _countdownTotalSeconds;
+    final hours = _countdownHours;
+    final minutes = _countdownMinutes;
+    final buffer = StringBuffer('合計: $totalSeconds 秒 (');
+    if (hours > 0) {
+      buffer.write('${hours}時間');
+    }
+    buffer.write('${minutes}分)');
+    return buffer.toString();
+  }
+
+  int get _countdownTotalSeconds =>
+      _countdownHours * 3600 + _countdownMinutes * 60;
 
   Widget _buildSaveButton(BuildContext context) {
     return ElevatedButton(
@@ -671,10 +719,21 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
       final newPinCount = _pinCount.toInt();
       final pinCountChanged =
           previousPinCount != null && previousPinCount != newPinCount;
-      final normalizedGameMinutes =
-          _clampInt(_gameDurationMinutes.round(), 1, 480);
-      final normalizedGeneratorSeconds =
-          _clampInt(_generatorClearDurationSeconds.round(), 10, _maxGeneratorClearSeconds);
+      final normalizedGameMinutes = _clampInt(
+        _gameDurationMinutes.round(),
+        _minGameDurationMinutes,
+        _maxGameDurationMinutes,
+      );
+      final normalizedGeneratorSeconds = _clampInt(
+        _generatorClearDurationSeconds.round(),
+        10,
+        _maxGeneratorClearSeconds,
+      );
+      final normalizedCountdownSeconds = _clampInt(
+        _countdownTotalSeconds,
+        _minCountdownSeconds,
+        _maxCountdownSeconds,
+      );
       final settings = GameSettingsInput(
         captureRadiusM: _captureRadius.toInt(),
         runnerSeeKillerRadiusM: _runnerSeeKiller.toInt(),
@@ -683,7 +742,7 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
         killerDetectRunnerRadiusM: _killerDetectRunner.toInt(),
         killerSeeGeneratorRadiusM: _killerSeeGenerator.toInt(),
         pinCount: newPinCount,
-        countdownDurationSec: _countdownMinutes * 60 + _countdownSeconds,
+        countdownDurationSec: normalizedCountdownSeconds,
         gameDurationSec: normalizedGameMinutes * 60,
         generatorClearDurationSec: normalizedGeneratorSeconds,
       );
@@ -747,28 +806,35 @@ class _GameSettingsPageState extends ConsumerState<GameSettingsPage> {
   }
 
   List<int> _gameDurationMinuteOptions(int hours) {
-    final minMinutes = hours == 0 ? 1 : 0;
-    final remaining = 480 - hours * 60;
-    final maxMinutes = remaining <= 0
-        ? 0
-        : (remaining >= 59 ? 59 : remaining);
-    if (minMinutes >= maxMinutes) {
-      return [minMinutes];
+    final normalizedHours =
+        _clampInt(hours, 0, _maxGameDurationMinutes ~/ 60);
+    final remainingMinutes = _maxGameDurationMinutes - normalizedHours * 60;
+    final baseOptions = normalizedHours == 0
+        ? const [20, 40]
+        : const [0, 20, 40];
+    final options = <int>[];
+    for (final option in baseOptions) {
+      if (option > remainingMinutes) continue;
+      final total = normalizedHours * 60 + option;
+      if (total < _minGameDurationMinutes) continue;
+      options.add(option);
     }
-    return List<int>.generate(
-      maxMinutes - minMinutes + 1,
-      (index) => minMinutes + index,
-    );
+    return options;
   }
 
   int _normalizeGameDurationMinutes(int hours, int minutes) {
-    final minMinutes = hours == 0 ? 1 : 0;
-    final remaining = 480 - hours * 60;
-    final maxMinutes = remaining <= 0
-        ? 0
-        : (remaining >= 59 ? 59 : remaining);
-    final safeMinutes = _clampInt(minutes, minMinutes, maxMinutes);
-    return _clampInt(hours * 60 + safeMinutes, 1, 480);
+    final normalizedHours =
+        _clampInt(hours, 0, _maxGameDurationMinutes ~/ 60);
+    final minuteOptions = _gameDurationMinuteOptions(normalizedHours);
+    final normalizedMinutes = minuteOptions.contains(minutes)
+        ? minutes
+        : minuteOptions.first;
+    final totalMinutes = normalizedHours * 60 + normalizedMinutes;
+    return _clampInt(
+      totalMinutes,
+      _minGameDurationMinutes,
+      _maxGameDurationMinutes,
+    );
   }
 
   void _updateGameDuration(int hours, int minutes) {
