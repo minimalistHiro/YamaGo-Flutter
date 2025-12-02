@@ -406,8 +406,10 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       _lastReportedPlayerActiveStatus = null;
       return;
     }
-    final shouldBeActive = isActiveOverride ??
-        (_isAppInForeground || _canReportActiveInBackground);
+    final defaultActiveState = _isAppInForeground ||
+        _canReportActiveInBackground ||
+        _isClearingPin;
+    final shouldBeActive = isActiveOverride ?? defaultActiveState;
     if (_lastReportedPlayerActiveUid == resolvedUid &&
         _lastReportedPlayerActiveStatus == shouldBeActive) {
       return;
@@ -1461,6 +1463,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
         _activeClearingPinId = pin.id;
         _pinClearRemainingSeconds = _pinClearDurationSeconds;
       });
+      _maybeUpdatePlayerActiveStatus();
       _startPinClearTimer();
       final repo = ref.read(pinRepositoryProvider);
       await repo.updatePinStatus(
@@ -1593,7 +1596,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     _pinClearTimer?.cancel();
     _pinClearTimer = null;
     if (!mounted) return;
-    if (!_isClearingPin &&
+    final wasClearing = _isClearingPin;
+    if (!wasClearing &&
         _pinClearRemainingSeconds == null &&
         _activeClearingPinId == null) {
       return;
@@ -1603,6 +1607,9 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       _pinClearRemainingSeconds = null;
       _activeClearingPinId = null;
     });
+    if (wasClearing) {
+      _maybeUpdatePlayerActiveStatus();
+    }
   }
 
   void _maybeCancelClearingWhenOutOfRange() {
