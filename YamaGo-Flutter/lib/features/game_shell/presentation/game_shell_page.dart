@@ -2771,18 +2771,21 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     return [
       _TimedEventSlideData(
         title: '$quarterLabelの進行状況',
+        assetPath: 'assets/timed_events/event1.png',
         description:
             'ゲーム時間の$percentProgress%（開始から$eventTimeLabel）でイベントが発生します。'
             'マップにはターゲット発電所が水色ピンで表示され、逃走者は距離を問わずいつでも確認できます。',
       ),
       _TimedEventSlideData(
         title: '逃走者のミッション',
+        assetPath: 'assets/timed_events/event2.png',
         description:
             '逃走者チームは$eventDurationLabel以内に${requiredRunners}人同時解除を達成する必要があります。'
             '現在の逃走者数は$runnerCountLabel。解除担当と警戒担当を素早く決め、対象発電所を守りながらカウントダウンを完了させましょう。',
       ),
       _TimedEventSlideData(
         title: '達成できなかった場合',
+        assetPath: 'assets/timed_events/event3.png',
         description:
             '制限時間内に人数を満たせないと鬼の捕獲半径が次のイベントまで2倍に拡大します。'
             '解除が難しい局面でも連携を切らさず、リスクを最小限に抑えて乗り切ってください。',
@@ -3388,10 +3391,12 @@ class _TimedEventSlideData {
   const _TimedEventSlideData({
     required this.title,
     required this.description,
+    required this.assetPath,
   });
 
   final String title;
   final String description;
+  final String assetPath;
 }
 
 class _TimedEventSlide extends StatelessWidget {
@@ -3423,6 +3428,10 @@ class _TimedEventSlide extends StatelessWidget {
             decoration: BoxDecoration(
               color: fillColor,
               border: Border.all(color: borderColor),
+            ),
+            child: Image.asset(
+              slide.assetPath,
+              fit: BoxFit.cover,
             ),
           ),
         ),
