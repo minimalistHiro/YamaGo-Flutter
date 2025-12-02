@@ -458,8 +458,9 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     _updatePinClearDuration(game);
     var currentPlayer = currentPlayerState?.valueOrNull;
     currentPlayer ??= _currentPlayer(playersState, currentUid);
+    final baseCaptureRadius = game?.captureRadiusM?.toDouble();
     final captureRadius = _effectiveCaptureRadiusMeters(
-      baseRadiusMeters: game?.captureRadiusM?.toDouble(),
+      baseRadiusMeters: baseCaptureRadius,
       game: game,
       player: currentPlayer,
     );
@@ -482,7 +483,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     final captureTargetInfo = _findCaptureTarget(
       gameStatus: game?.status,
       currentPlayer: currentPlayer,
-      captureRadiusMeters: captureRadius,
+      baseCaptureRadiusMeters: baseCaptureRadius,
+      game: game,
       selfPosition: selfLatLng,
       players: players,
     );
@@ -566,10 +568,14 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
         countdownRemainingSeconds > 0;
     final hasRunningCountdown = game?.status == GameStatus.running &&
         (runningRemainingSeconds ?? 0) > 0;
+    final isCountdownWaiting = game?.status == GameStatus.countdown &&
+        countdownRemainingSeconds != null &&
+        countdownRemainingSeconds <= 0;
     _updateStatusTicker(isCountdownActive || hasRunningCountdown);
     final countdownOverlay = _buildCountdownOverlay(
       context: context,
       isActive: isCountdownActive,
+      isWaitingForStart: isCountdownWaiting,
       remainingSeconds: countdownRemainingSeconds,
       role: currentPlayer?.role,
     );
@@ -2020,7 +2026,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   _CaptureTargetInfo? _findCaptureTarget({
     required GameStatus? gameStatus,
     required Player? currentPlayer,
-    required double? captureRadiusMeters,
+    required double? baseCaptureRadiusMeters,
+    required Game? game,
     required LatLng? selfPosition,
     required List<Player>? players,
   }) {
@@ -2028,7 +2035,12 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     if (currentPlayer == null || currentPlayer.role != PlayerRole.oni) {
       return null;
     }
-    if (captureRadiusMeters == null || captureRadiusMeters <= 0) {
+    final effectiveRadius = _effectiveCaptureRadiusMeters(
+      baseRadiusMeters: baseCaptureRadiusMeters,
+      game: game,
+      player: currentPlayer,
+    );
+    if (effectiveRadius == null || effectiveRadius <= 0) {
       return null;
     }
     if (selfPosition == null) return null;
@@ -2050,7 +2062,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
         runnerPosition.latitude,
         runnerPosition.longitude,
       );
-      if (distance > captureRadiusMeters) continue;
+      if (distance > effectiveRadius) continue;
       if (closestDistance == null || distance < closestDistance) {
         closestDistance = distance;
         closestRunner = player;
@@ -2604,23 +2616,37 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   Widget? _buildCountdownOverlay({
     required BuildContext context,
     required bool isActive,
+    required bool isWaitingForStart,
     required int? remainingSeconds,
     required PlayerRole? role,
   }) {
-    if (!isActive || remainingSeconds == null || role == null) {
+    final shouldShow = (isActive && remainingSeconds != null) ||
+        (!isActive && isWaitingForStart);
+    if (!shouldShow || role == null) {
       return null;
     }
-    final formatted = _formatCountdown(remainingSeconds);
+    final formatted =
+        remainingSeconds != null ? _formatCountdown(remainingSeconds) : null;
+    final isWaitingState = !isActive && isWaitingForStart;
     return switch (role) {
-      PlayerRole.oni => _buildOniCountdownOverlay(context, formatted),
-      PlayerRole.runner => _buildRunnerCountdownOverlay(context, formatted),
+      PlayerRole.oni => _buildOniCountdownOverlay(
+          context,
+          formattedTime: formatted,
+          showWaitingMessage: isWaitingState,
+        ),
+      PlayerRole.runner => _buildRunnerCountdownOverlay(
+          context,
+          formattedTime: formatted,
+          showWaitingMessage: isWaitingState,
+        ),
     };
   }
 
   Widget _buildOniCountdownOverlay(
-    BuildContext context,
-    String formattedTime,
-  ) {
+    BuildContext context, {
+    String? formattedTime,
+    bool showWaitingMessage = false,
+  }) {
     final theme = Theme.of(context);
     return Positioned.fill(
       child: IgnorePointer(
@@ -2631,23 +2657,26 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                formattedTime,
-                style: theme.textTheme.displayLarge?.copyWith(
+                showWaitingMessage ? 'しばらくお待ちください' : (formattedTime ?? '--:--'),
+                style: (showWaitingMessage
+                        ? theme.textTheme.headlineMedium
+                        : theme.textTheme.displayLarge)
+                    ?.copyWith(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
-                      letterSpacing: 2,
+                      letterSpacing: showWaitingMessage ? 1.2 : 2,
                     ) ??
-                    const TextStyle(
-                      fontSize: 80,
+                    TextStyle(
+                      fontSize: showWaitingMessage ? 36 : 80,
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
-                      letterSpacing: 2,
+                      letterSpacing: showWaitingMessage ? 1.2 : 2,
                     ),
               ),
               const SizedBox(height: 12),
-              const Text(
-                '鬼のスタートまで',
-                style: TextStyle(
+              Text(
+                showWaitingMessage ? 'ゲーム開始準備中です' : '鬼のスタートまで',
+                style: const TextStyle(
                   color: Colors.white70,
                   fontSize: 18,
                   letterSpacing: 1.2,
@@ -2661,9 +2690,10 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   }
 
   Widget _buildRunnerCountdownOverlay(
-    BuildContext context,
-    String formattedTime,
-  ) {
+    BuildContext context, {
+    String? formattedTime,
+    bool showWaitingMessage = false,
+  }) {
     final theme = Theme.of(context);
     return Positioned(
       right: 16,
@@ -2691,14 +2721,14 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  '鬼が出発するまで',
+                  showWaitingMessage ? 'ゲーム開始準備中' : '鬼が出発するまで',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  formattedTime,
+                  showWaitingMessage ? 'しばらくお待ちください' : (formattedTime ?? '--:--'),
                   style: theme.textTheme.headlineSmall?.copyWith(
                     fontFeatures: const [FontFeature.tabularFigures()],
                     fontWeight: FontWeight.bold,
