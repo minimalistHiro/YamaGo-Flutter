@@ -308,6 +308,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
   bool _showTimedEventResultPopup = false;
   _TimedEventResultData? _timedEventResultData;
   DateTime? _lastTimedEventResultAt;
+  static const Duration _inactiveCaptureGracePeriod = Duration(minutes: 5);
 
   @override
   void initState() {
@@ -2046,14 +2047,18 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     if (selfPosition == null) return null;
     if (players == null) return null;
 
+    final now = DateTime.now();
     Player? closestRunner;
     double? closestDistance;
 
     for (final player in players) {
       if (player.uid == currentPlayer.uid) continue;
-      if (player.role != PlayerRole.runner) continue;
-      if (!player.isActive) continue;
-      if (player.status != PlayerStatus.active) continue;
+      if (!_isRunnerCapturable(
+        player,
+        referenceTime: now,
+      )) {
+        continue;
+      }
       final runnerPosition = player.position;
       if (runnerPosition == null) continue;
       final distance = Geolocator.distanceBetween(
@@ -2076,6 +2081,34 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       runner: closestRunner,
       distanceMeters: closestDistance,
     );
+  }
+
+  bool _isRunnerCapturable(
+    Player player, {
+    DateTime? referenceTime,
+  }) {
+    if (player.role != PlayerRole.runner) {
+      return false;
+    }
+    if (player.status != PlayerStatus.active) {
+      return false;
+    }
+    if (player.position == null) {
+      return false;
+    }
+    if (player.isActive) {
+      return true;
+    }
+    final updatedAt = player.updatedAt;
+    if (updatedAt == null) {
+      return false;
+    }
+    final now = referenceTime ?? DateTime.now();
+    final age = now.difference(updatedAt);
+    if (age.isNegative) {
+      return true;
+    }
+    return age <= _inactiveCaptureGracePeriod;
   }
 
   _RescueTargetInfo? _findRescueTarget({
