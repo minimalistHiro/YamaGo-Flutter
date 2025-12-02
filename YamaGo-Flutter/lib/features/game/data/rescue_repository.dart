@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/services/firebase_providers.dart';
 
+const _inactivePlayerGracePeriod = Duration(minutes: 5);
+
 class RescueRepository {
   RescueRepository(this._firestore);
 
@@ -45,16 +47,14 @@ class RescueRepository {
       if (rescuerStatus != 'active') {
         throw StateError('救出できる状態ではありません。');
       }
-      final rescuerActive = rescuerData['active'] as bool? ?? true;
-      if (!rescuerActive) {
+      if (!_isPlayerWithinGrace(rescuerData)) {
         throw StateError('救出できる状態ではありません。');
       }
       final victimStatus = victimData['status'] as String? ?? 'active';
       if (victimStatus != 'downed') {
         throw StateError('対象は救出が不要です。');
       }
-      final victimActive = victimData['active'] as bool? ?? true;
-      if (!victimActive) {
+      if (!_isPlayerWithinGrace(victimData)) {
         throw StateError('対象はすでにゲームから離脱しています。');
       }
       final now = FieldValue.serverTimestamp();
@@ -82,6 +82,24 @@ class RescueRepository {
         'createdAt': now,
       });
     });
+  }
+
+  bool _isPlayerWithinGrace(Map<String, dynamic> playerData) {
+    final isActive = playerData['active'] as bool? ?? true;
+    if (isActive) {
+      return true;
+    }
+    final updatedAt = playerData['updatedAt'];
+    if (updatedAt is Timestamp) {
+      final now = DateTime.now();
+      final updatedAtDate = updatedAt.toDate();
+      final age = now.difference(updatedAtDate);
+      if (age.isNegative) {
+        return true;
+      }
+      return age <= _inactivePlayerGracePeriod;
+    }
+    return false;
   }
 }
 

@@ -2118,6 +2118,34 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     return age <= _inactiveCaptureGracePeriod;
   }
 
+  bool _isRunnerRescuable(
+    Player player, {
+    DateTime? referenceTime,
+  }) {
+    if (player.role != PlayerRole.runner) {
+      return false;
+    }
+    if (player.status != PlayerStatus.downed) {
+      return false;
+    }
+    if (player.position == null) {
+      return false;
+    }
+    if (player.isActive) {
+      return true;
+    }
+    final updatedAt = player.updatedAt;
+    if (updatedAt == null) {
+      return false;
+    }
+    final now = referenceTime ?? DateTime.now();
+    final age = now.difference(updatedAt);
+    if (age.isNegative) {
+      return true;
+    }
+    return age <= _inactiveCaptureGracePeriod;
+  }
+
   _RescueTargetInfo? _findRescueTarget({
     required GameStatus? gameStatus,
     required Player? currentPlayer,
@@ -2139,13 +2167,17 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     if (selfPosition == null) return null;
     if (players == null) return null;
 
+    final now = DateTime.now();
     Player? closestRunner;
     double? closestDistance;
     for (final player in players) {
       if (player.uid == currentPlayer.uid) continue;
-      if (!player.isActive) continue;
-      if (player.role != PlayerRole.runner) continue;
-      if (player.status != PlayerStatus.downed) continue;
+      if (!_isRunnerRescuable(
+        player,
+        referenceTime: now,
+      )) {
+        continue;
+      }
       final targetPosition = player.position;
       if (targetPosition == null) continue;
       final distance = Geolocator.distanceBetween(
