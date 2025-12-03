@@ -1223,7 +1223,7 @@ function buildTimedEventMetadata({
     ? players.filter((player) => player.role === 'runner').length
     : 0;
   const requiredRunners = totalRunnerCount > 0
-    ? Math.max(1, Math.floor(Math.random() * totalRunnerCount) + 1)
+    ? Math.floor(Math.random() * Math.max(1, Math.ceil(totalRunnerCount / 2))) + 1
     : DEFAULT_TIMED_EVENT_REQUIRED_RUNNERS;
   const baseDurationSeconds = Math.floor(totalDurationSeconds / 8);
   const truncatedDurationSeconds = Math.floor(baseDurationSeconds / 60) * 60;

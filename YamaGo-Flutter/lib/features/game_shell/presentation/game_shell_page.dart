@@ -516,6 +516,17 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     _latestGameStatus = game?.status;
     _latestTimedEventActive = game?.timedEventActive ?? false;
     _latestTimedEventTargetPinId = game?.timedEventTargetPinId;
+    final bool isTimedEventActive = _latestTimedEventActive;
+    final int? timedEventParticipantCount =
+        isTimedEventActive && players != null
+            ? _countTimedEventParticipants(
+                game: game,
+                players: players,
+                pins: pins,
+              )
+            : null;
+    final int? timedEventRequiredRunners =
+        isTimedEventActive ? game?.timedEventRequiredRunners : null;
     _handleGameEndStatusChange(
       previousStatus: previousGameStatus,
       currentStatus: _latestGameStatus,
@@ -760,6 +771,9 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
                       playersState: playersState,
                       totalGenerators: totalGenerators,
                       clearedGenerators: clearedGenerators,
+                      showTimedEventProgress: isTimedEventActive,
+                      timedEventParticipantCount: timedEventParticipantCount,
+                      timedEventRequiredRunners: timedEventRequiredRunners,
                     ),
                   ),
                 ],
@@ -2272,6 +2286,62 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       pin.lat,
       pin.lng,
     );
+  }
+
+  int? _countTimedEventParticipants({
+    required Game? game,
+    required List<Player>? players,
+    required List<PinPoint>? pins,
+  }) {
+    if (game == null || !game.timedEventActive) {
+      return null;
+    }
+    if (players == null || players.isEmpty) {
+      return null;
+    }
+    final targetPinId = game.timedEventTargetPinId;
+    if (targetPinId == null || targetPinId.isEmpty) {
+      return null;
+    }
+    final captureRadiusMeters = game.captureRadiusM?.toDouble();
+    if (captureRadiusMeters == null || captureRadiusMeters <= 0) {
+      return null;
+    }
+    final sourcePins = pins ?? _latestPins;
+    PinPoint? targetPin;
+    for (final pin in sourcePins) {
+      if (pin.id == targetPinId) {
+        targetPin = pin;
+        break;
+      }
+    }
+    if (targetPin == null) {
+      return null;
+    }
+    if (targetPin.status == PinStatus.cleared) {
+      return game.timedEventRequiredRunners ??
+          players.where((player) => player.role == PlayerRole.runner).length;
+    }
+    if (targetPin.status != PinStatus.clearing) {
+      return 0;
+    }
+    var count = 0;
+    for (final player in players) {
+      if (player.role != PlayerRole.runner) continue;
+      if (!player.isActive || player.status != PlayerStatus.active) continue;
+      final position = player.position;
+      if (position == null) continue;
+      final distance = Geolocator.distanceBetween(
+        position.latitude,
+        position.longitude,
+        targetPin.lat,
+        targetPin.lng,
+      );
+      if (distance <= captureRadiusMeters) {
+        count += 1;
+      }
+    }
+    return count;
   }
 
   bool _isRunnerDetectedByOni({

@@ -15,11 +15,17 @@ class PlayerHud extends StatefulWidget {
     required this.playersState,
     this.totalGenerators,
     this.clearedGenerators,
+    this.showTimedEventProgress = false,
+    this.timedEventParticipantCount,
+    this.timedEventRequiredRunners,
   });
 
   final AsyncValue<List<Player>> playersState;
   final int? totalGenerators;
   final int? clearedGenerators;
+  final bool showTimedEventProgress;
+  final int? timedEventParticipantCount;
+  final int? timedEventRequiredRunners;
 
   @override
   State<PlayerHud> createState() => _PlayerHudState();
@@ -37,6 +43,9 @@ class _PlayerHudState extends State<PlayerHud> {
           players: players,
           totalGenerators: widget.totalGenerators,
           clearedGenerators: widget.clearedGenerators,
+          showTimedEventProgress: widget.showTimedEventProgress,
+          timedEventParticipantCount: widget.timedEventParticipantCount,
+          timedEventRequiredRunners: widget.timedEventRequiredRunners,
         ),
         loading: () => const _HudLoadingContent(),
         error: (error, _) => _HudErrorContent(message: error.toString()),
@@ -147,11 +156,17 @@ class _PlayerStatsContent extends StatelessWidget {
     required this.players,
     required this.totalGenerators,
     required this.clearedGenerators,
+    required this.showTimedEventProgress,
+    required this.timedEventParticipantCount,
+    required this.timedEventRequiredRunners,
   });
 
   final List<Player> players;
   final int? totalGenerators;
   final int? clearedGenerators;
+  final bool showTimedEventProgress;
+  final int? timedEventParticipantCount;
+  final int? timedEventRequiredRunners;
 
   @override
   Widget build(BuildContext context) {
@@ -228,6 +243,12 @@ class _PlayerStatsContent extends StatelessWidget {
           value: _formatGeneratorProgress(),
           color: _cyberGold,
         ),
+        if (showTimedEventProgress)
+          _HudStatRow(
+            label: 'イベント解除',
+            value: _formatTimedEventProgress(),
+            color: _cyberGlow,
+          ),
       ],
     );
   }
@@ -237,6 +258,16 @@ class _PlayerStatsContent extends StatelessWidget {
     final denominator = totalGenerators;
     final numeratorText = numerator != null ? '$numerator' : '--';
     final denominatorText = denominator != null ? '$denominator' : '--';
+    return '$numeratorText/$denominatorText';
+  }
+
+  String _formatTimedEventProgress() {
+    final numeratorText = timedEventParticipantCount != null
+        ? '$timedEventParticipantCount'
+        : '--';
+    final denominatorText = timedEventRequiredRunners != null
+        ? '$timedEventRequiredRunners'
+        : '--';
     return '$numeratorText/$denominatorText';
   }
 }
