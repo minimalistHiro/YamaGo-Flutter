@@ -3162,7 +3162,11 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
         continue;
       }
       rankingEntries.add(
-        _SummaryRankingEntry(playerName: player.nickname, value: value),
+        _SummaryRankingEntry(
+          playerName: player.nickname,
+          value: value,
+          avatarUrl: player.avatarUrl,
+        ),
       );
     }
     rankingEntries.sort((a, b) => b.value.compareTo(a.value));
@@ -3211,8 +3215,8 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
 class _InfoBanner extends StatelessWidget {
   const _InfoBanner({
     required this.message,
-    required this.actionLabel,
-    required this.onActionTap,
+    this.actionLabel,
+    this.onActionTap,
   });
 
   final String message;
@@ -3337,13 +3341,15 @@ class _SummaryRankingEntry {
   const _SummaryRankingEntry({
     required this.playerName,
     required this.value,
+    this.avatarUrl,
   });
 
   final String playerName;
   final int value;
+  final String? avatarUrl;
 }
 
-class _GameSummaryPopup extends StatelessWidget {
+class _GameSummaryPopup extends StatefulWidget {
   const _GameSummaryPopup({
     required this.capturedPlayersCount,
     required this.generatorsClearedCount,
@@ -3363,8 +3369,124 @@ class _GameSummaryPopup extends StatelessWidget {
   final List<_SummaryRankingEntry> runnerRescueRanking;
 
   @override
+  State<_GameSummaryPopup> createState() => _GameSummaryPopupState();
+}
+
+class _GameSummaryPopupState extends State<_GameSummaryPopup> {
+  late final PageController _pageController;
+  int _currentPage = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final pages = [
+      _buildSummaryDetailsPage(theme),
+      _buildRankingPage(
+        theme: theme,
+        title: '鬼の捕獲数ランキング',
+        entries: widget.oniCaptureRanking,
+        unit: '人',
+      ),
+      _buildRankingPage(
+        theme: theme,
+        title: '逃走者の発電機解除数ランキング',
+        entries: widget.runnerGeneratorRanking,
+        unit: '箇所',
+      ),
+      _buildRankingPage(
+        theme: theme,
+        title: '逃走者の救助数ランキング',
+        entries: widget.runnerRescueRanking,
+        unit: '回',
+      ),
+    ];
+    final double pageHeight = ((MediaQuery.of(context).size.height * 0.5)
+            .clamp(320.0, 420.0))
+        .toDouble();
+
+    return Card(
+      color: theme.colorScheme.surface.withOpacity(0.96),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              height: pageHeight,
+              child: PageView(
+                controller: _pageController,
+                onPageChanged: (index) {
+                  setState(() => _currentPage = index);
+                },
+                children: pages
+                    .map(
+                      (page) => SingleChildScrollView(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: page,
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconButton(
+                  tooltip: '前のページ',
+                  onPressed: _currentPage == 0
+                      ? null
+                      : () => _pageController.previousPage(
+                            duration: const Duration(milliseconds: 250),
+                            curve: Curves.easeInOut,
+                          ),
+                  icon: const Icon(Icons.chevron_left),
+                ),
+                const SizedBox(width: 8),
+                _buildPageIndicator(theme, pages.length),
+                const SizedBox(width: 8),
+                IconButton(
+                  tooltip: '次のページ',
+                  onPressed: _currentPage == pages.length - 1
+                      ? null
+                      : () => _pageController.nextPage(
+                            duration: const Duration(milliseconds: 250),
+                            curve: Curves.easeInOut,
+                          ),
+                  icon: const Icon(Icons.chevron_right),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: widget.onClose,
+                child: const Text('閉じる'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSummaryDetailsPage(ThemeData theme) {
     Widget buildRow(String label, String value) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
@@ -3390,125 +3512,163 @@ class _GameSummaryPopup extends StatelessWidget {
       );
     }
 
-    Widget buildRankingSection({
-      required String title,
-      required List<_SummaryRankingEntry> entries,
-      required String unit,
-    }) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Center(
+          child: Text(
+            'ゲーム内容',
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        buildRow('捕獲者数', '${widget.capturedPlayersCount}人'),
+        buildRow('発電機解除数', '${widget.generatorsClearedCount}箇所'),
+        buildRow('ゲーム時間', widget.gameDurationLabel),
+        const SizedBox(height: 20),
+        Divider(color: theme.colorScheme.outlineVariant),
+        const SizedBox(height: 16),
+        Text(
+          'スワイプしてランキングを確認',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRankingPage({
+    required ThemeData theme,
+    required String title,
+    required List<_SummaryRankingEntry> entries,
+    required String unit,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Center(
+          child: Text(
             title,
-            style: theme.textTheme.titleSmall?.copyWith(
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ),
+        const SizedBox(height: 16),
+        if (entries.isEmpty)
+          Center(
+            child: Text(
+              'まだ記録がありません',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          )
+        else
+          ...List.generate(
+            entries.length,
+            (index) => Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: _buildRankingEntry(
+                theme: theme,
+                entry: entries[index],
+                index: index,
+                unit: unit,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildRankingEntry({
+    required ThemeData theme,
+    required _SummaryRankingEntry entry,
+    required int index,
+    required String unit,
+  }) {
+    final rankLabel = '${index + 1}位';
+    final rankColor = _rankColorForIndex(index, theme);
+
+    return Row(
+      children: [
+        SizedBox(
+          width: 40,
+          child: Text(
+            rankLabel,
+            style: theme.textTheme.titleMedium?.copyWith(
+              color: rankColor,
               fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 8),
-          if (entries.isEmpty)
-            Text(
-              'まだ記録がありません',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            )
-          else
-            ...List.generate(entries.length, (index) {
-              final entry = entries[index];
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 32,
-                      child: Text(
-                        '${index + 1}位',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        entry.playerName,
-                        style: theme.textTheme.bodyMedium,
-                      ),
-                    ),
-                    Text(
-                      '${entry.value}$unit',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }),
-        ],
-      );
-    }
-
-    return Card(
-      color: theme.colorScheme.surface.withOpacity(0.96),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'ゲーム内容',
-              style: theme.textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            buildRow('捕獲者数', '$capturedPlayersCount人'),
-            buildRow('発電機解除数', '$generatorsClearedCount箇所'),
-            buildRow('ゲーム時間', gameDurationLabel),
-            const SizedBox(height: 20),
-            Divider(color: theme.colorScheme.outlineVariant),
-            const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'ランキング',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            buildRankingSection(
-              title: '鬼の捕獲数',
-              entries: oniCaptureRanking,
-              unit: '人',
-            ),
-            const SizedBox(height: 16),
-            buildRankingSection(
-              title: '逃走者の発電機解除数',
-              entries: runnerGeneratorRanking,
-              unit: '箇所',
-            ),
-            const SizedBox(height: 16),
-            buildRankingSection(
-              title: '逃走者の救助数',
-              entries: runnerRescueRanking,
-              unit: '回',
-            ),
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: onClose,
-                child: const Text('閉じる'),
-              ),
-            ),
-          ],
         ),
+        const SizedBox(width: 8),
+        CircleAvatar(
+          radius: 18,
+          backgroundImage:
+              entry.avatarUrl != null ? NetworkImage(entry.avatarUrl!) : null,
+          backgroundColor: theme.colorScheme.surfaceVariant,
+          child: entry.avatarUrl == null
+              ? Icon(
+                  Icons.person,
+                  color: theme.colorScheme.onSurfaceVariant,
+                )
+              : null,
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            entry.playerName,
+            style: theme.textTheme.bodyMedium,
+          ),
+        ),
+        Text(
+          '${entry.value}$unit',
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Color _rankColorForIndex(int index, ThemeData theme) {
+    switch (index) {
+      case 0:
+        return const Color(0xFFFFD700);
+      case 1:
+        return const Color(0xFFC0C0C0);
+      case 2:
+        return const Color(0xFFCD7F32);
+      default:
+        return theme.colorScheme.onSurfaceVariant;
+    }
+  }
+
+  Widget _buildPageIndicator(ThemeData theme, int count) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(
+        count,
+        (index) {
+          final isActive = _currentPage == index;
+          return AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            margin: const EdgeInsets.symmetric(horizontal: 4),
+            height: 8,
+            width: isActive ? 20 : 8,
+            decoration: BoxDecoration(
+              color: isActive
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.outlineVariant,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          );
+        },
       ),
     );
   }
