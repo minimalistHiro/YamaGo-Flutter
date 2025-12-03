@@ -3,8 +3,9 @@ import 'dart:math' as math;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/services/firebase_providers.dart';
 import '../../../core/location/yamanote_constants.dart';
+import '../../../core/location/yamanote_polygon_strategy.dart';
+import '../../../core/services/firebase_providers.dart';
 import '../domain/pin_point.dart';
 
 class PinRepository {
@@ -98,19 +99,25 @@ class PinRepository {
 
   List<({double lat, double lng})> _generatePinLocations(int count) {
     final random = math.Random();
-    final sw = yamanoteBounds.southwest;
-    final ne = yamanoteBounds.northeast;
     final locations = <({double lat, double lng})>[];
     final usedKeys = <String>{};
-    final maxAttempts = math.max(count * 200, 200);
+    final maxAttempts = math.max(count * 200, 400);
     var attempts = 0;
 
     while (locations.length < count && attempts < maxAttempts) {
-      final lat = sw.latitude + random.nextDouble() * (ne.latitude - sw.latitude);
-      final lng = sw.longitude + random.nextDouble() * (ne.longitude - sw.longitude);
-      final key = _formatLocationKey(lat, lng);
+      final candidate = randomPointInYamanotePolygon(
+        random: random,
+        maxAttempts: 40,
+      );
+
+      if (candidate == null) {
+        attempts += 1;
+        continue;
+      }
+
+      final key = _formatLocationKey(candidate.lat, candidate.lng);
       if (usedKeys.add(key)) {
-        locations.add((lat: lat, lng: lng));
+        locations.add(candidate);
       } else {
         attempts += 1;
       }

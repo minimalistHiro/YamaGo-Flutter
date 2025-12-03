@@ -71,6 +71,39 @@ const PIN_DUPLICATE_PRECISION = 6;
 const MAX_PIN_COUNT = 20;
 const TIMED_EVENT_TIMEOUT_SWEEP_INTERVAL_MS = 15 * 1000;
 const TIMED_EVENT_TIMEOUT_SWEEP_COUNT = 4;
+const YAMANOTE_STATION_POLYGON = [
+  { lat: 35.681236, lng: 139.767125 },
+  { lat: 35.673146, lng: 139.763912 },
+  { lat: 35.66623, lng: 139.758987 },
+  { lat: 35.654998, lng: 139.757531 },
+  { lat: 35.645551, lng: 139.747148 },
+  { lat: 35.635547, lng: 139.74201 },
+  { lat: 35.628479, lng: 139.738758 },
+  { lat: 35.6197, lng: 139.728553 },
+  { lat: 35.62565, lng: 139.723539 },
+  { lat: 35.633998, lng: 139.715828 },
+  { lat: 35.646687, lng: 139.710084 },
+  { lat: 35.658034, lng: 139.701636 },
+  { lat: 35.67022, lng: 139.702042 },
+  { lat: 35.683061, lng: 139.702042 },
+  { lat: 35.690921, lng: 139.700258 },
+  { lat: 35.701306, lng: 139.700044 },
+  { lat: 35.712285, lng: 139.703782 },
+  { lat: 35.721994, lng: 139.706181 },
+  { lat: 35.728926, lng: 139.71038 },
+  { lat: 35.731145, lng: 139.728046 },
+  { lat: 35.733492, lng: 139.739219 },
+  { lat: 35.736453, lng: 139.74801 },
+  { lat: 35.738524, lng: 139.760968 },
+  { lat: 35.732231, lng: 139.766942 },
+  { lat: 35.727772, lng: 139.770987 },
+  { lat: 35.72128, lng: 139.778576 },
+  { lat: 35.713768, lng: 139.777254 },
+  { lat: 35.707118, lng: 139.774219 },
+  { lat: 35.698353, lng: 139.773114 },
+  { lat: 35.69169, lng: 139.770883 },
+  { lat: 35.681236, lng: 139.767125 },
+];
 
 async function handleChatNotification({
   snapshot,
@@ -1609,17 +1642,18 @@ async function randomizePendingPinLocations(gameId) {
 function generatePinLocations(count, existingKeys) {
   const locations = [];
   const usedKeys = new Set(existingKeys || []);
-  const maxAttempts = Math.max(count * 200, 200);
+  const maxAttempts = Math.max(count * 200, 400);
   let attempts = 0;
   while (locations.length < count && attempts < maxAttempts) {
-    const lat = getRandomInRange(YAMANOTE_BOUNDS.south, YAMANOTE_BOUNDS.north);
-    const lng = getRandomInRange(YAMANOTE_BOUNDS.west, YAMANOTE_BOUNDS.east);
-    const key = formatPinLocationKey(lat, lng);
+    attempts += 1;
+    const candidate = randomPointInYamanotePolygon(40);
+    if (!candidate) {
+      continue;
+    }
+    const key = formatPinLocationKey(candidate.lat, candidate.lng);
     if (!usedKeys.has(key)) {
       usedKeys.add(key);
-      locations.push({ lat, lng });
-    } else {
-      attempts += 1;
+      locations.push(candidate);
     }
   }
   let fallbackOffset = 0;
@@ -1644,4 +1678,43 @@ function formatPinLocationKey(lat, lng) {
 
 function getRandomInRange(min, max) {
   return min + Math.random() * (max - min);
+}
+
+function randomPointInYamanotePolygon(maxAttempts = 200) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const lat = getRandomInRange(YAMANOTE_BOUNDS.south, YAMANOTE_BOUNDS.north);
+    const lng = getRandomInRange(YAMANOTE_BOUNDS.west, YAMANOTE_BOUNDS.east);
+    if (isPointInsideYamanotePolygon(lat, lng)) {
+      return { lat, lng };
+    }
+  }
+  return null;
+}
+
+function isPointInsideYamanotePolygon(lat, lng) {
+  return isPointInsidePolygon(lat, lng, YAMANOTE_STATION_POLYGON);
+}
+
+function isPointInsidePolygon(lat, lng, polygon) {
+  if (!Array.isArray(polygon) || polygon.length === 0) {
+    return false;
+  }
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const xi = polygon[i].lng;
+    const yi = polygon[i].lat;
+    const xj = polygon[j].lng;
+    const yj = polygon[j].lat;
+    const denominator = yj - yi;
+    if (Math.abs(denominator) <= 1e-12) {
+      continue;
+    }
+    const intersects =
+      yi > lat !== yj > lat &&
+      lng < ((xj - xi) * (lat - yi)) / denominator + xi;
+    if (intersects) {
+      inside = !inside;
+    }
+  }
+  return inside;
 }
