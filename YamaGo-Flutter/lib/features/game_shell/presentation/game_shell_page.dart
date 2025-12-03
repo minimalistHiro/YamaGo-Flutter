@@ -717,6 +717,21 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       allPinsCleared: allPinsCleared,
       allRunnersDown: allRunnersDown,
     );
+    final oniCaptureRanking = _buildRankingEntries(
+      players: players,
+      role: PlayerRole.oni,
+      valueSelector: (player) => player.stats.captures,
+    );
+    final runnerGeneratorRanking = _buildRankingEntries(
+      players: players,
+      role: PlayerRole.runner,
+      valueSelector: (player) => player.stats.generatorsCleared,
+    );
+    final runnerRescueRanking = _buildRankingEntries(
+      players: players,
+      role: PlayerRole.runner,
+      valueSelector: (player) => player.stats.rescues,
+    );
     _syncTimedEventPopup(
       game: game,
       players: players,
@@ -919,6 +934,9 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
                     capturedPlayersCount: capturedPlayersCount,
                     generatorsClearedCount: summaryClearedGenerators,
                     gameDurationLabel: formattedGameDuration,
+                    oniCaptureRanking: oniCaptureRanking,
+                    runnerGeneratorRanking: runnerGeneratorRanking,
+                    runnerRescueRanking: runnerRescueRanking,
                     onClose: _handleGameSummaryClose,
                   ),
                 ),
@@ -1532,6 +1550,7 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
         status: PinStatus.cleared,
       );
       _resetPinClearingState();
+      unawaited(_recordGeneratorClearForCurrentPlayer());
       _showSnackBar('発電所を解除しました');
       unawaited(_maybeResolveTimedEventOnPinClear(pinId));
     } catch (error) {
@@ -1547,6 +1566,27 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
       _resetPinClearingState();
       final message = error is StateError ? error.message : error.toString();
       _showSnackBar('発電所の解除に失敗しました: $message');
+    }
+  }
+
+  Future<void> _recordGeneratorClearForCurrentPlayer() async {
+    if (_latestPlayerRole != PlayerRole.runner) {
+      return;
+    }
+    final auth = ref.read(firebaseAuthProvider);
+    final uid = auth.currentUser?.uid;
+    if (uid == null) {
+      return;
+    }
+    try {
+      final repo = ref.read(playerRepositoryProvider);
+      await repo.incrementGeneratorClear(
+        gameId: widget.gameId,
+        uid: uid,
+      );
+    } catch (error, stackTrace) {
+      debugPrint('Failed to record generator clear: $error');
+      debugPrint('$stackTrace');
     }
   }
 
@@ -3103,6 +3143,35 @@ class _GameMapSectionState extends ConsumerState<GameMapSection>
     return count;
   }
 
+  List<_SummaryRankingEntry> _buildRankingEntries({
+    required List<Player>? players,
+    required PlayerRole role,
+    required int Function(Player player) valueSelector,
+    int maxEntries = 5,
+  }) {
+    if (players == null || players.isEmpty) {
+      return const <_SummaryRankingEntry>[];
+    }
+    final rankingEntries = <_SummaryRankingEntry>[];
+    for (final player in players) {
+      if (player.role != role) {
+        continue;
+      }
+      final value = valueSelector(player);
+      if (value <= 0) {
+        continue;
+      }
+      rankingEntries.add(
+        _SummaryRankingEntry(playerName: player.nickname, value: value),
+      );
+    }
+    rankingEntries.sort((a, b) => b.value.compareTo(a.value));
+    if (rankingEntries.length > maxEntries) {
+      return rankingEntries.take(maxEntries).toList();
+    }
+    return rankingEntries;
+  }
+
   bool _areAllRunnersDown(List<Player>? players) {
     if (players == null || players.isEmpty) {
       return false;
@@ -3264,18 +3333,34 @@ class _GameEndResultPopup extends StatelessWidget {
   }
 }
 
+class _SummaryRankingEntry {
+  const _SummaryRankingEntry({
+    required this.playerName,
+    required this.value,
+  });
+
+  final String playerName;
+  final int value;
+}
+
 class _GameSummaryPopup extends StatelessWidget {
   const _GameSummaryPopup({
     required this.capturedPlayersCount,
     required this.generatorsClearedCount,
     required this.gameDurationLabel,
     required this.onClose,
+    required this.oniCaptureRanking,
+    required this.runnerGeneratorRanking,
+    required this.runnerRescueRanking,
   });
 
   final int capturedPlayersCount;
   final int generatorsClearedCount;
   final String gameDurationLabel;
   final VoidCallback onClose;
+  final List<_SummaryRankingEntry> oniCaptureRanking;
+  final List<_SummaryRankingEntry> runnerGeneratorRanking;
+  final List<_SummaryRankingEntry> runnerRescueRanking;
 
   @override
   Widget build(BuildContext context) {
@@ -3305,6 +3390,65 @@ class _GameSummaryPopup extends StatelessWidget {
       );
     }
 
+    Widget buildRankingSection({
+      required String title,
+      required List<_SummaryRankingEntry> entries,
+      required String unit,
+    }) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (entries.isEmpty)
+            Text(
+              'まだ記録がありません',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            )
+          else
+            ...List.generate(entries.length, (index) {
+              final entry = entries[index];
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 32,
+                      child: Text(
+                        '${index + 1}位',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        entry.playerName,
+                        style: theme.textTheme.bodyMedium,
+                      ),
+                    ),
+                    Text(
+                      '${entry.value}$unit',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+        ],
+      );
+    }
+
     return Card(
       color: theme.colorScheme.surface.withOpacity(0.96),
       shape: RoundedRectangleBorder(
@@ -3325,6 +3469,36 @@ class _GameSummaryPopup extends StatelessWidget {
             buildRow('捕獲者数', '$capturedPlayersCount人'),
             buildRow('発電機解除数', '$generatorsClearedCount箇所'),
             buildRow('ゲーム時間', gameDurationLabel),
+            const SizedBox(height: 20),
+            Divider(color: theme.colorScheme.outlineVariant),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'ランキング',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            buildRankingSection(
+              title: '鬼の捕獲数',
+              entries: oniCaptureRanking,
+              unit: '人',
+            ),
+            const SizedBox(height: 16),
+            buildRankingSection(
+              title: '逃走者の発電機解除数',
+              entries: runnerGeneratorRanking,
+              unit: '箇所',
+            ),
+            const SizedBox(height: 16),
+            buildRankingSection(
+              title: '逃走者の救助数',
+              entries: runnerRescueRanking,
+              unit: '回',
+            ),
             const SizedBox(height: 24),
             SizedBox(
               width: double.infinity,

@@ -83,6 +83,7 @@ class GameRepository {
       'lng': null,
       'updatedAt': FieldValue.serverTimestamp(),
       'stats': {
+        'generatorsCleared': 0,
         'captures': 0,
         'capturedTimes': 0,
         'rescues': 0,

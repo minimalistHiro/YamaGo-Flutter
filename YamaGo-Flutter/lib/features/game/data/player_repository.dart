@@ -51,6 +51,16 @@ class PlayerRepository {
     return _playersCollection(gameId).doc(uid).delete();
   }
 
+  Future<void> incrementGeneratorClear({
+    required String gameId,
+    required String uid,
+  }) {
+    return _playersCollection(gameId).doc(uid).update({
+      'stats.generatorsCleared': FieldValue.increment(1),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
   Future<Player?> fetchPlayer({
     required String gameId,
     required String uid,

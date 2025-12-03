@@ -83,24 +83,28 @@ class Player {
 
 class PlayerStats {
   const PlayerStats({
+    this.generatorsCleared = 0,
     this.captures = 0,
     this.capturedTimes = 0,
     this.rescues = 0,
     this.rescuedTimes = 0,
   });
 
+  final int generatorsCleared;
   final int captures;
   final int capturedTimes;
   final int rescues;
   final int rescuedTimes;
 
   PlayerStats copyWith({
+    int? generatorsCleared,
     int? captures,
     int? capturedTimes,
     int? rescues,
     int? rescuedTimes,
   }) {
     return PlayerStats(
+      generatorsCleared: generatorsCleared ?? this.generatorsCleared,
       captures: captures ?? this.captures,
       capturedTimes: capturedTimes ?? this.capturedTimes,
       rescues: rescues ?? this.rescues,
@@ -113,6 +117,8 @@ class PlayerStats {
       return const PlayerStats();
     }
     return PlayerStats(
+      generatorsCleared:
+          (data['generatorsCleared'] as num?)?.toInt() ?? 0,
       captures: (data['captures'] as num?)?.toInt() ?? 0,
       capturedTimes: (data['capturedTimes'] as num?)?.toInt() ?? 0,
       rescues: (data['rescues'] as num?)?.toInt() ?? 0,
